@@ -38,6 +38,56 @@ ALLOWED_TOOL_NAMES = frozenset({
 # Tools the agent_chat loop may execute server-side (excludes destructive registry ops)
 AGENT_EXECUTABLE_TOOLS = ALLOWED_TOOL_NAMES - frozenset({"pull_model", "delete_model", "copy_model"})
 
+# Models (Qwen, Continue) often emit Claude/Continue-style names — map to MCP tools
+TOOL_ALIASES: dict[str, str] = {
+    "file_glob_search": "glob_files",
+    "glob_search": "glob_files",
+    "file_glob": "glob_files",
+    "glob": "glob_files",
+    "ls": "list_dir",
+    "list_directory": "list_dir",
+    "list": "list_dir",
+    "file_read": "read_file",
+    "read": "read_file",
+    "file_write": "write_file",
+    "write": "write_file",
+    "file_edit": "edit_file",
+    "edit": "edit_file",
+    "bash": "run_command",
+    "shell": "run_command",
+    "terminal": "run_command",
+    "run_terminal_cmd": "run_command",
+    "execute": "run_command",
+}
+
+
+def _remap_tool_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Normalize argument keys from other agent harnesses."""
+    if name == "glob_files":
+        if "glob_pattern" in args and "pattern" not in args:
+            args["pattern"] = args.pop("glob_pattern")
+        if "glob" in args and "pattern" not in args:
+            args["pattern"] = args.pop("glob")
+    if name == "list_dir":
+        if "dirPath" in args and "path" not in args:
+            args["path"] = args.pop("dirPath")
+        if "directory" in args and "path" not in args:
+            args["path"] = args.pop("directory")
+    if name == "run_command":
+        if "cmd" in args and "command" not in args:
+            args["command"] = args.pop("cmd")
+    if name == "read_file" and "file_path" in args and "path" not in args:
+        args["path"] = args.pop("file_path")
+    return args
+
+
+def _canonical_tool_name(name: str, args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    key = (name or "").strip()
+    low = key.lower().replace("-", "_")
+    canonical = TOOL_ALIASES.get(low, TOOL_ALIASES.get(key, key))
+    args = dict(args or {})
+    return _remap_tool_args(canonical, args)
+
 
 def _tool_schema(
     name: str,
@@ -108,7 +158,7 @@ def get_tool_definitions() -> list[dict[str, Any]]:
         ),
         _tool_schema(
             "list_dir",
-            "List files and directories under a workspace path (non-recursive unless recursive=true).",
+            "List files in a directory. Use for 'ls' or list folder — NOT a tool named ls.",
             {
                 "path": {"type": "string", "description": "Directory path relative to workspace root"},
                 "recursive": {"type": "boolean", "description": "List recursively (max depth 4)"},
@@ -128,10 +178,10 @@ def get_tool_definitions() -> list[dict[str, Any]]:
         ),
         _tool_schema(
             "glob_files",
-            "Find files by glob pattern under workspace (e.g. **/*.py).",
+            "Find files by glob pattern. Use for 'find config.yaml' — NOT file_glob_search. Example pattern: **/config.yaml",
             {
-                "pattern": {"type": "string", "description": "Glob pattern"},
-                "path": {"type": "string", "description": "Base directory (default workspace root)"},
+                "pattern": {"type": "string", "description": "Glob pattern e.g. **/config.yaml"},
+                "path": {"type": "string", "description": "Base directory (default .)"},
                 "max_results": {"type": "integer", "description": "Max paths (default 100)"},
             },
             ["pattern"],
@@ -725,17 +775,28 @@ def _parse_tool_json(text: str) -> dict[str, Any] | None:
     if not text or not text.strip():
         return None
     text = text.strip()
-    # Qwen / Hermes wrappers
+    # Qwen / Hermes / Continue XML-ish wrappers
     for pat in (
         r"<tool_call>\s*(\{.*?\})\s*</tool_call>",
         r"<function=([^>]+)>\s*(\{.*?\})\s*</function>",
+        r"<function=([^>/\s]+)\s*/?>",
     ):
         m = re.search(pat, text, re.DOTALL | re.IGNORECASE)
         if m:
             try:
-                if m.lastindex and m.lastindex >= 2:
+                if m.lastindex and m.lastindex >= 2 and m.group(2).strip().startswith("{"):
                     return {"name": m.group(1).strip(), "arguments": json.loads(m.group(2))}
-                return json.loads(m.group(1))
+                fname = m.group(1).strip()
+                args: dict[str, Any] = {}
+                for pk, pv in re.findall(
+                    r"<parameter=([^>]+)>\s*([^<]*)",
+                    text,
+                    re.IGNORECASE,
+                ):
+                    args[pk.strip()] = pv.strip()
+                if args:
+                    return {"name": fname, "arguments": args}
+                return {"name": fname, "arguments": {}}
             except (json.JSONDecodeError, IndexError):
                 pass
     m = re.search(r"\{[^{}]*\"name\"\s*:\s*\"[^\"]+\"[^{}]*\"arguments\"\s*:\s*\{.*\}[^{}]*\}", text, re.DOTALL)
@@ -787,15 +848,21 @@ def _normalize_tool_calls(tool_calls: list[Any]) -> list[dict[str, Any]]:
                     out.append(_tool_call_dict(nested["name"], nested.get("arguments") or {}))
                     continue
 
+        name, args = _canonical_tool_name(name, args if isinstance(args, dict) else {})
         if name not in ALLOWED_TOOL_NAMES:
             nested = _parse_tool_json(json.dumps(args) if args else name)
-            if nested and nested.get("name") in ALLOWED_TOOL_NAMES:
-                out.append(_tool_call_dict(nested["name"], nested.get("arguments") or {}))
-                continue
+            if nested:
+                nname, nargs = _canonical_tool_name(
+                    str(nested.get("name", "")),
+                    nested.get("arguments") or {},
+                )
+                if nname in ALLOWED_TOOL_NAMES:
+                    out.append(_tool_call_dict(nname, nargs))
+                    continue
             logger.warning("dropping unknown tool call: %s", name)
             continue
 
-        tc = _tool_call_dict(name, args if isinstance(args, dict) else {})
+        tc = _tool_call_dict(name, args)
         if raw.get("id"):
             tc["id"] = raw["id"]
         out.append(tc)
@@ -804,9 +871,15 @@ def _normalize_tool_calls(tool_calls: list[Any]) -> list[dict[str, Any]]:
 
 def _tool_calls_from_content(content: str) -> list[dict[str, Any]] | None:
     parsed = _parse_tool_json(content)
-    if not parsed or parsed.get("name") not in ALLOWED_TOOL_NAMES:
+    if not parsed:
         return None
-    return [_tool_call_dict(parsed["name"], parsed.get("arguments") or {})]
+    name, args = _canonical_tool_name(
+        str(parsed.get("name", "")),
+        parsed.get("arguments") or {},
+    )
+    if name not in ALLOWED_TOOL_NAMES:
+        return None
+    return [_tool_call_dict(name, args)]
 
 
 def _format_tool_response(tool_calls: list[dict[str, Any]]) -> str:
@@ -815,9 +888,12 @@ def _format_tool_response(tool_calls: list[dict[str, Any]]) -> str:
 
 async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> str:
     """Execute one tool server-side (used by agent_chat)."""
+    name, args = _canonical_tool_name(
+        name,
+        arguments if isinstance(arguments, dict) else {},
+    )
     if name not in AGENT_EXECUTABLE_TOOLS:
         return f"Error: tool {name!r} not allowed in agent loop"
-    args = arguments if isinstance(arguments, dict) else {}
     try:
         if name == "read_file":
             return await _read_file_impl(str(args.get("path", "")))

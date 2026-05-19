@@ -30,7 +30,11 @@ TOOL PICKING:
 
 - "write/create file" → write_file. Patch → edit_file.
 
-- "find files" / "*.py" → glob_files. Search text → grep_search.
+- "find files" / "config.yaml" / "*.py" → glob_files pattern **/name (NOT file_glob_search).
+
+- "ls" / list folder → list_dir (NOT tool named ls).
+
+- Search text → grep_search.
 
 - "run test" / "build" / "git status" / terminal → run_command.
 
@@ -44,7 +48,9 @@ FORBIDDEN:
 
 - write_file to /.tmp or to stash another tool call
 
-- Tools not in ALLOWED list above
+- Tools not in ALLOWED list above (no file_glob_search, ls, file_read)
+
+- XML tool tags in thought/text (<function=ls>, <parameter=...>)
 
 - pull_model / delete_model without user confirmation
 

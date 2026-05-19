@@ -1,21 +1,58 @@
 @echo off
-setlocal enabledelayedexpansion
-chcp 65001 >nul 2>&1
-
-:: ── Navigate to script directory ────────────────────────────────
 cd /d "%~dp0"
 
-:: ── ANSI color codes ────────────────────────────────────────────
-for /f %%a in ('echo prompt $E ^| cmd') do set "ESC=%%a"
-set "C=%ESC%[36m"
-set "G=%ESC%[32m"
-set "Y=%ESC%[33m"
-set "R=%ESC%[31m"
-set "D=%ESC%[2m"
-set "B=%ESC%[1m"
-set "N=%ESC%[0m"
+:: Load .env before delayed expansion (values may contain !)
+call :load_env
 
-:: ── Read models + host ports from .env (fallbacks match docker-compose defaults) ─
+setlocal EnableDelayedExpansion
+chcp 65001 >nul 2>&1
+
+for /f %%a in ('echo prompt $E ^| cmd') do set "ESC=%%a"
+set "C=!ESC![36m"
+set "G=!ESC![32m"
+set "Y=!ESC![33m"
+set "R=!ESC![31m"
+set "D=!ESC![2m"
+set "B=!ESC![1m"
+set "N=!ESC![0m"
+
+echo.
+echo !C!======================================================!N!
+echo !C!=!N!!B!     AI.DEN  --  Local AI Cluster                   !N!!C!=!N!
+echo !C!=!N!!D!     llama.cpp + model-router + MCP + Open WebUI    !N!!C!=!N!
+echo !C!======================================================!N!
+echo.
+
+:: Route commands
+if /i "%~1"=="--stop" goto :cmd_stop
+if /i "%~1"=="-stop" goto :cmd_stop
+if /i "%~1"=="stop" goto :cmd_stop
+if /i "%~1"=="--status" goto :cmd_status
+if /i "%~1"=="-status" goto :cmd_status
+if /i "%~1"=="status" goto :cmd_status
+if /i "%~1"=="--logs" goto :cmd_logs
+if /i "%~1"=="-logs" goto :cmd_logs
+if /i "%~1"=="logs" goto :cmd_logs
+if /i "%~1"=="--pull" goto :cmd_pull
+if /i "%~1"=="-pull" goto :cmd_pull
+if /i "%~1"=="pull" goto :cmd_pull
+if /i "%~1"=="--cpu" goto :cmd_start_cpu
+if /i "%~1"=="-cpu" goto :cmd_start_cpu
+if /i "%~1"=="cpu" goto :cmd_start_cpu
+if /i "%~1"=="--help" goto :cmd_help
+if /i "%~1"=="-help" goto :cmd_help
+if /i "%~1"=="help" goto :cmd_help
+if /i "%~1"=="/?" goto :cmd_help
+if /i "%~1"=="mtp" (
+    set "COMPOSE_PROFILES=hermes"
+    set "COMPOSE_EXTRA=!COMPOSE_EXTRA! -f docker-compose.hermes-mtp.yml"
+    shift
+)
+goto :cmd_start_default
+
+:: ---------------------------------------------------------------------------
+:load_env
+setlocal DisableDelayedExpansion
 set "CODER=qwen2.5-coder:7b"
 set "LLAMA=llama3.1:8b"
 set "VISION=gemma4"
@@ -24,16 +61,17 @@ set "LLAMA_PORT=8766"
 set "VISION_PORT=8767"
 set "OLLAMA_PORT=11434"
 set "WEBUI_PORT=8080"
+set "MCP_PORT=5000"
 set "AUTO_LAUNCH_CLAW=true"
 set "COMPOSE_PROFILES="
 set "HERMES_GATEWAY_PORT=8642"
 set "LLAMACPP_PORT=8081"
 set "LLAMA_BACKEND=llamacpp"
-set "INFERENCE_BACKEND=llamacpp"
 set "COMPOSE_EXTRA="
 set "AIDEN_USE_RESOURCE_LIMITS=1"
+set "LLAMACPP_GGUF=Qwen3.6-27B-MTP-UD-Q4_K_XL.gguf"
 if exist ".env" (
-    for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
+    for /f "usebackq eol=# tokens=1,* delims==" %%a in (".env") do (
         if "%%a"=="CODER_MODEL" set "CODER=%%b"
         if "%%a"=="LLAMA_MODEL" set "LLAMA=%%b"
         if "%%a"=="VISION_MODEL" set "VISION=%%b"
@@ -42,6 +80,7 @@ if exist ".env" (
         if "%%a"=="VISION_PORT" set "VISION_PORT=%%b"
         if "%%a"=="OLLAMA_PORT" set "OLLAMA_PORT=%%b"
         if "%%a"=="WEBUI_PORT" set "WEBUI_PORT=%%b"
+        if "%%a"=="MCP_PORT" set "MCP_PORT=%%b"
         if "%%a"=="AUTO_LAUNCH_CLAW" set "AUTO_LAUNCH_CLAW=%%b"
         if "%%a"=="COMPOSE_PROFILES" set "COMPOSE_PROFILES=%%b"
         if "%%a"=="HERMES_GATEWAY_PORT" set "HERMES_GATEWAY_PORT=%%b"
@@ -51,339 +90,249 @@ if exist ".env" (
         if "%%a"=="LLAMACPP_GGUF" set "LLAMACPP_GGUF=%%b"
     )
 )
-if not defined LLAMACPP_GGUF set "LLAMACPP_GGUF=Qwen3.6-27B-MTP-UD-Q4_K_XL.gguf"
-if /i "!AIDEN_USE_RESOURCE_LIMITS!"=="1" set "COMPOSE_EXTRA=-f docker-compose.resources.yml"
-if /i "!AIDEN_USE_RESOURCE_LIMITS!"=="true" set "COMPOSE_EXTRA=-f docker-compose.resources.yml"
-if /i "%~1"=="mtp" (
-    set "COMPOSE_PROFILES=hermes"
-    set "LLAMA_BACKEND=llamacpp"
-    if /i "!AIDEN_USE_RESOURCE_LIMITS!"=="1" (
-        set "COMPOSE_EXTRA=-f docker-compose.resources.yml"
-    ) else (
-        set "COMPOSE_EXTRA="
-    )
-    shift
-)
+if /i "%AIDEN_USE_RESOURCE_LIMITS%"=="1" set "COMPOSE_EXTRA=-f docker-compose.yml -f docker-compose.resources.yml"
+if /i "%AIDEN_USE_RESOURCE_LIMITS%"=="true" set "COMPOSE_EXTRA=-f docker-compose.yml -f docker-compose.resources.yml"
+if not defined COMPOSE_EXTRA set "COMPOSE_EXTRA=-f docker-compose.yml"
+endlocal ^
+  & set "CODER=%CODER%" ^
+  & set "LLAMA=%LLAMA%" ^
+  & set "VISION=%VISION%" ^
+  & set "CODER_PORT=%CODER_PORT%" ^
+  & set "LLAMA_PORT=%LLAMA_PORT%" ^
+  & set "VISION_PORT=%VISION_PORT%" ^
+  & set "OLLAMA_PORT=%OLLAMA_PORT%" ^
+  & set "WEBUI_PORT=%WEBUI_PORT%" ^
+  & set "MCP_PORT=%MCP_PORT%" ^
+  & set "AUTO_LAUNCH_CLAW=%AUTO_LAUNCH_CLAW%" ^
+  & set "COMPOSE_PROFILES=%COMPOSE_PROFILES%" ^
+  & set "HERMES_GATEWAY_PORT=%HERMES_GATEWAY_PORT%" ^
+  & set "LLAMACPP_PORT=%LLAMACPP_PORT%" ^
+  & set "LLAMA_BACKEND=%LLAMA_BACKEND%" ^
+  & set "COMPOSE_EXTRA=%COMPOSE_EXTRA%" ^
+  & set "AIDEN_USE_RESOURCE_LIMITS=%AIDEN_USE_RESOURCE_LIMITS%" ^
+  & set "LLAMACPP_GGUF=%LLAMACPP_GGUF%"
+exit /b 0
 
-:: ── Banner ──────────────────────────────────────────────────────
-echo.
-echo %C%======================================================%N%
-echo %C%=%N%%B%     AI.DEN  --  Local AI Cluster                   %N%%C%=%N%
-echo %C%=%N%%D%     Ollama + Open WebUI + Model Router Pipeline (open-claw -> caveman)            %N%%C%=%N%
-echo %C%======================================================%N%
-echo.
-
-:: ── Route commands ──────────────────────────────────────────────
-if /i "%~1"=="--stop"       goto :cmd_stop
-if /i "%~1"=="-stop"        goto :cmd_stop
-if /i "%~1"=="stop"         goto :cmd_stop
-
-if /i "%~1"=="--status"     goto :cmd_status
-if /i "%~1"=="-status"      goto :cmd_status
-if /i "%~1"=="status"       goto :cmd_status
-
-if /i "%~1"=="--logs"       goto :cmd_logs
-if /i "%~1"=="-logs"        goto :cmd_logs
-if /i "%~1"=="logs"         goto :cmd_logs
-
-if /i "%~1"=="--pull"       goto :cmd_pull
-if /i "%~1"=="-pull"        goto :cmd_pull
-if /i "%~1"=="pull"         goto :cmd_pull
-
-if /i "%~1"=="--cpu"        goto :cmd_start_cpu_only
-if /i "%~1"=="-cpu"         goto :cmd_start_cpu_only
-if /i "%~1"=="cpu"          goto :cmd_start_cpu_only
-
-if /i "%~1"=="--help"       goto :cmd_help
-if /i "%~1"=="-help"        goto :cmd_help
-if /i "%~1"=="help"         goto :cmd_help
-if /i "%~1"=="/?"           goto :cmd_help
-
-goto :cmd_start_default
-
-:: ════════════════════════════════════════════════════════════════
-:: require_docker — call before any Docker Compose / docker exec work
-:: ════════════════════════════════════════════════════════════════
+:: ---------------------------------------------------------------------------
 :require_docker
 docker info >nul 2>&1
 if errorlevel 1 (
-    echo %R%[ERROR]%N% Docker is not running. Start Docker Desktop first.
-    pause
-    exit /b 1
+    echo !R![ERROR]!N! Docker is not running. Start Docker Desktop, then run this again.
+    call :pause_exit 1
 )
 exit /b 0
 
-:: ════════════════════════════════════════════════════════════════
-:: STOP
-:: ════════════════════════════════════════════════════════════════
+:: ---------------------------------------------------------------------------
+:compose_up
+set "GPU_MODE=%~1"
+if "!GPU_MODE!"=="0" (
+    docker compose !COMPOSE_EXTRA! -f docker-compose.cpu.yml up -d --build
+) else (
+    docker compose !COMPOSE_EXTRA! up -d --build
+)
+exit /b %ERRORLEVEL%
+
+:: ---------------------------------------------------------------------------
+:pause_exit
+echo.
+if "%~1"=="" (
+    pause
+    exit /b 0
+)
+echo [exit code %~1]
+pause
+exit /b %~1
+
+:: ---------------------------------------------------------------------------
 :cmd_stop
 call :require_docker
-if errorlevel 1 goto :eof
-echo %Y%[STOP]%N% Shutting down AI.DEN...
-docker compose down
-echo %G%[DONE]%N% AI.DEN stopped.
-goto :eof
+if errorlevel 1 exit /b 1
+echo !Y![STOP]!N! Shutting down AI.DEN...
+docker compose !COMPOSE_EXTRA! down
+echo !G![DONE]!N! AI.DEN stopped.
+call :pause_exit
+exit /b 0
 
-:: ════════════════════════════════════════════════════════════════
-:: STATUS
-:: ════════════════════════════════════════════════════════════════
+:: ---------------------------------------------------------------------------
 :cmd_status
 call :require_docker
-if errorlevel 1 goto :eof
-echo %C%[STATUS]%N% Container health:
+if errorlevel 1 exit /b 1
+echo !C![STATUS]!N! Container health:
 echo.
-docker compose ps 2>nul
+docker compose !COMPOSE_EXTRA! ps
 echo.
-echo %C%[MODELS]%N% Inference backend: !LLAMA_BACKEND!
-docker exec ollama ollama list 2>nul
-if errorlevel 1 (
-    curl -sf -m 3 "http://localhost:!LLAMACPP_PORT!/v1/models" 2>nul
-    if errorlevel 1 echo   %D%^(check llamacpp on port !LLAMACPP_PORT!^)%N%
-)
-goto :eof
+echo !C![MODELS]!N! Backend: !LLAMA_BACKEND!
+curl -sf -m 5 "http://localhost:!LLAMACPP_PORT!/v1/models" 2>nul
+if errorlevel 1 echo   !D!(llamacpp not ready on port !LLAMACPP_PORT!)!N!
+echo.
+curl -sf -m 3 "http://localhost:!MCP_PORT!/health" 2>nul
+if errorlevel 1 (echo   !D!(MCP not ready on port !MCP_PORT!)!N!) else (echo   !G!MCP OK!N! http://localhost:!MCP_PORT!/mcp)
+call :pause_exit
+exit /b 0
 
-:: ════════════════════════════════════════════════════════════════
-:: LOGS
-:: ════════════════════════════════════════════════════════════════
+:: ---------------------------------------------------------------------------
 :cmd_logs
 call :require_docker
-if errorlevel 1 goto :eof
-docker compose logs -f
-goto :eof
+if errorlevel 1 exit /b 1
+echo !D!Streaming logs (Ctrl+C to stop tailing; containers keep running)!N!
+docker compose !COMPOSE_EXTRA! logs -f --tail=80
+call :pause_exit
+exit /b 0
 
-:: ════════════════════════════════════════════════════════════════
-:: PULL MODELS
-:: ════════════════════════════════════════════════════════════════
+:: ---------------------------------------------------------------------------
 :cmd_pull
 call :require_docker
-if errorlevel 1 goto :eof
-docker exec ollama ollama list >nul 2>&1
-if errorlevel 1 (
-    echo %R%[ERROR]%N% Ollama container not running. Start AI.DEN first.
-    goto :eof
-)
-
-echo %Y%[PULL]%N% Checking %B%!CODER!%N% ...
-docker exec ollama ollama list 2>nul | findstr /c:"!CODER!" >nul 2>&1
-if errorlevel 1 (
-    echo %Y%[PULL]%N% Downloading %B%!CODER!%N% ^(~9 GB^)...
-    docker exec ollama ollama pull !CODER!
+if errorlevel 1 exit /b 1
+echo !Y![PULL]!N! Ollama is optional in this stack; models live in .\models\ as GGUF.
+echo   Expected: models\!LLAMACPP_GGUF!
+if not exist "models\!LLAMACPP_GGUF!" (
+    echo !R![WARN]!N! File not found. See models\README.md
 ) else (
-    echo %G%[OK]%N% !CODER! already downloaded
+    echo !G![OK]!N! Found models\!LLAMACPP_GGUF!
 )
+call :pause_exit
+exit /b 0
 
-echo %Y%[PULL]%N% Checking %B%!LLAMA!%N% ...
-docker exec ollama ollama list 2>nul | findstr /c:"!LLAMA!" >nul 2>&1
-if errorlevel 1 (
-    echo %Y%[PULL]%N% Downloading %B%!LLAMA!%N% ^(~5 GB^)...
-    docker exec ollama ollama pull !LLAMA!
-) else (
-    echo %G%[OK]%N% !LLAMA! already downloaded
-)
-
-echo %Y%[PULL]%N% Checking %B%!VISION!%N% ...
-docker exec ollama ollama list 2>nul | findstr /c:"!VISION!" >nul 2>&1
-if errorlevel 1 (
-    echo %Y%[PULL]%N% Downloading %B%!VISION!%N% ^(~10 GB^)...
-    docker exec ollama ollama pull !VISION!
-) else (
-    echo %G%[OK]%N% !VISION! already downloaded
-)
-goto :eof
-
-:: ════════════════════════════════════════════════════════════════
-:: HELP
-:: ════════════════════════════════════════════════════════════════
+:: ---------------------------------------------------------------------------
 :cmd_help
-echo   %B%Usage:%N%  start-aiden.bat [command]
-echo   Same as:      start-app.bat %D%^(alias for discoverability^)%N%
+echo   !B!Usage:!N!  start-aiden.bat [command]
+echo   Same as:      start-app.bat
 echo.
-echo   %B%Commands:%N%
-echo   -----------------------------------------------
-echo     %D%^(no arg^)%N%       Start AI.DEN ^(GPU accelerated^)
-echo     cpu            Start AI.DEN in CPU-only mode
-echo     stop           Shut down all containers
-echo     status         Show container health + models
-echo     logs           Tail live logs
-echo     pull           Download / update models
-echo     mtp            Start with llama.cpp MTP + Hermes Agent profiles
-echo     help           Show this help
+echo   !B!Commands:!N!
+echo     (no arg)   Start all services (GPU if available)
+echo     cpu        Force CPU-only compose overlay
+echo     mtp        Enable Hermes profile + MTP overlay
+echo     stop       Shut down containers
+echo     status     Health + model list
+echo     logs       Tail container logs
+echo     pull       Check GGUF in models\
+echo     help       This help
 echo.
-echo   The terminal stays open while AI.DEN runs.
-echo   Close the window or press Ctrl+C to shut everything down.
-echo.
-goto :eof
+echo   Window stays open while services run. Close or Ctrl+C to stop the stack.
+call :pause_exit
+exit /b 0
 
-:: ════════════════════════════════════════════════════════════════
-:: START (default — GPU accelerated)
-:: ════════════════════════════════════════════════════════════════
+:: ---------------------------------------------------------------------------
+:cmd_start_cpu
+call :require_docker
+if errorlevel 1 exit /b 1
+set "GPU_MODE=0"
+echo !C![START]!N! Launching AI.DEN (CPU-only)...
+call :compose_up 0
+if errorlevel 1 (
+    echo !R![ERROR]!N! docker compose failed.
+    call :pause_exit 1
+)
+goto :after_start
+
+:: ---------------------------------------------------------------------------
 :cmd_start_default
 call :require_docker
 if errorlevel 1 exit /b 1
 set "GPU_MODE=1"
-echo %C%[START]%N% Launching AI.DEN...
-echo.
-echo   Mode: %B%GPU accelerated ^(NVIDIA RTX^)%N%
-docker compose %COMPOSE_EXTRA% up -d
+echo !C![START]!N! Launching AI.DEN (GPU compose)...
+call :compose_up 1
 if errorlevel 1 (
-    echo %R%[ERROR]%N% Failed to start containers. Try: %B%start-aiden.bat cpu%N%
-    pause
-    exit /b 1
+    echo !Y![WARN]!N! GPU start failed — retrying CPU-only...
+    set "GPU_MODE=0"
+    call :compose_up 0
+    if errorlevel 1 (
+        echo !R![ERROR]!N! Failed to start. Run: start-aiden.bat cpu
+        call :pause_exit 1
+    )
 )
-goto :after_start
 
-:: ════════════════════════════════════════════════════════════════
-:: START (CPU-only fallback)
-:: ════════════════════════════════════════════════════════════════
-:cmd_start_cpu_only
-call :require_docker
-if errorlevel 1 exit /b 1
-set "GPU_MODE=0"
-echo %C%[START]%N% Launching AI.DEN...
-echo.
-echo   Mode: %B%CPU only%N% ^(no GPU acceleration^)
-docker compose -f docker-compose.yml -f docker-compose.cpu.yml %COMPOSE_EXTRA% up -d
-if errorlevel 1 (
-    echo %R%[ERROR]%N% Failed to start containers.
-    pause
-    exit /b 1
-)
-goto :after_start
-
-:: ════════════════════════════════════════════════════════════════
-:: POST-START: health checks + summary + keep-alive
-:: ════════════════════════════════════════════════════════════════
+:: ---------------------------------------------------------------------------
 :after_start
 echo.
-echo %C%[HEALTH]%N% Waiting for services...
+docker compose !COMPOSE_EXTRA! ps
+echo.
+echo !C![HEALTH]!N! Waiting for services (first boot can take several minutes)...
 
-call :wait_for "Model router"   "http://localhost:!CODER_PORT!/_aiden/pipeline" 60
-call :wait_for "llama.cpp MTP" "http://localhost:!LLAMACPP_PORT!/v1/models" 180
-call :wait_for "Coder Proxy"    "http://localhost:!CODER_PORT!/"  30
-call :wait_for "Llama Proxy"    "http://localhost:!LLAMA_PORT!/"  30
-call :wait_for "Vision Proxy"   "http://localhost:!VISION_PORT!/" 30
-call :wait_for "Open WebUI"     "http://localhost:!WEBUI_PORT!/"  90
+call :wait_for "llama.cpp"     "http://localhost:!LLAMACPP_PORT!/v1/models" 600
+call :wait_for "Model router"  "http://localhost:!CODER_PORT!/_aiden/pipeline" 120
+call :wait_for "MCP server"    "http://localhost:!MCP_PORT!/health" 90
+call :wait_for "Coder API"     "http://localhost:!CODER_PORT!/" 30
+call :wait_for "Open WebUI"    "http://localhost:!WEBUI_PORT!/" 120
 
 echo !COMPOSE_PROFILES! | findstr /i "hermes" >nul 2>&1
-if not errorlevel 1 (
-    call :wait_for "Hermes Agent"  "http://localhost:!HERMES_GATEWAY_PORT!/" 90
-)
+if not errorlevel 1 call :wait_for "Hermes Agent" "http://localhost:!HERMES_GATEWAY_PORT!/" 90
 
 echo.
-
 if not exist "models\*.gguf" (
-    echo %Y%[MODELS]%N% No GGUF in .\models\ — see models\README.md
-    echo   Expected: models\!LLAMACPP_GGUF! ^(from .env^)
+    echo !Y![MODELS]!N! No GGUF in .\models\ — see models\README.md
+    echo   Expected: models\!LLAMACPP_GGUF!
     echo.
 )
 
-:: ── Summary ─────────────────────────────────────────────────────
-echo %G%[READY]%N% AI.DEN is online.
+echo !G![READY]!N! AI.DEN is online.
 echo.
-echo   %B%Pipeline ^(coder port !CODER_PORT! — use this for Cursor, NOT :8081 direct^)%N%
-echo     %G%http://127.0.0.1:!CODER_PORT!/_aiden/pipeline%N%        %D%GET stages%N%
-echo     %G%http://127.0.0.1:!CODER_PORT!/_aiden/pipeline/preview%N% %D%preview claw+caveman%N%
-echo     %G%http://127.0.0.1:!CODER_PORT!/_aiden/swagger%N%       %D%Swagger UI%N%
+echo   !B!Cursor / Continue / Claw!N!
+echo     API      http://127.0.0.1:!CODER_PORT!/v1
+echo     MCP      http://127.0.0.1:!MCP_PORT!/mcp
+echo     Pipeline http://127.0.0.1:!CODER_PORT!/_aiden/pipeline
 echo.
-echo   %B%Endpoints%N%
-echo   -----------------------------------------------
-echo   Coder API   %C%http://localhost:!CODER_PORT!%N%   !CODER!
-echo   Llama API   %C%http://localhost:!LLAMA_PORT!%N%   !LLAMA!
-echo   Vision API  %C%http://localhost:!VISION_PORT!%N%   !VISION!
-echo   Web UI      %C%http://localhost:!WEBUI_PORT!%N%
-echo   Ollama      %C%http://localhost:!OLLAMA_PORT!%N%  ^(direct^)
-if /i "!LLAMA_BACKEND!"=="llamacpp" (
-    echo   llama.cpp   %C%http://localhost:!LLAMACPP_PORT!/v1%N%  ^(MTP direct^)
-)
-echo !COMPOSE_PROFILES! | findstr /i "hermes" >nul 2>&1
-if not errorlevel 1 (
-    echo   Hermes      %C%http://localhost:!HERMES_GATEWAY_PORT!%N%  ^(gateway API^)
-)
+echo   !B!Endpoints!N!
+echo   Coder   http://localhost:!CODER_PORT!     !CODER!
+echo   Llama   http://localhost:!LLAMA_PORT!     !LLAMA!
+echo   Vision  http://localhost:!VISION_PORT!     !VISION!
+echo   WebUI   http://localhost:!WEBUI_PORT!
+echo   MCP     http://localhost:!MCP_PORT!/mcp
+echo   llama   http://localhost:!LLAMACPP_PORT!/v1
 echo.
-echo   %B%Commands%N%  ^(open a second terminal^)
-echo   -----------------------------------------------
-echo   %D%start-aiden.bat status%N%      Show health
-echo   %D%start-aiden.bat pull%N%        Download models
-echo   %D%start-aiden.bat cpu%N%         Restart without GPU
-echo   %D%start-aiden.bat help%N%        All commands
-echo   %D%launch-claw.bat help%N%        Claw CLI ^(native claw.exe or Docker openclaw^)
-echo.
-echo   %D%prompt pipeline HTTP%N%
-echo     GET  http://localhost:!CODER_PORT!/_aiden/pipeline
-echo     Swagger  http://localhost:!CODER_PORT!/_aiden/swagger
-echo     OpenAPI  http://localhost:!CODER_PORT!/_aiden/openapi.yaml
-echo     POST JSON ^{"stages":["claw","caveman"]^} — drop claw or caveman to disable
-echo     ^(set AIDEN_ADMIN_TOKEN in .env to require Bearer auth on POST^)
+echo   !D!Other terminal: start-aiden.bat status ^| logs ^| stop!N!
 echo.
 
 call :maybe_launch_claw
 
-:: ── Keep-alive: attach foreground ───────────────────────────────
-:: Stops the detached containers then re-launches in foreground.
-:: Closing this window or pressing Ctrl+C will stop everything.
 title AI.DEN - Local AI Cluster [RUNNING]
-echo %C%[LIVE]%N% AI.DEN is running. %B%Close this window%N% or %B%Ctrl+C%N% to shut down.
-echo.
-echo %D%--- streaming container logs ---%N%
+echo !C![LIVE]!N! Streaming logs. !B!Close this window!N! or !B!Ctrl+C!N! to shut down all services.
 echo.
 
-:: Bring down detached containers, then restart attached to this terminal.
-:: When this window closes, Docker Compose stops all containers.
-docker compose stop >nul 2>&1
+docker compose !COMPOSE_EXTRA! logs -f --tail=50
 if "!GPU_MODE!"=="0" (
-    docker compose -f docker-compose.yml -f docker-compose.cpu.yml %COMPOSE_EXTRA% up
+    docker compose !COMPOSE_EXTRA! -f docker-compose.cpu.yml down
 ) else (
-    docker compose %COMPOSE_EXTRA% up
+    docker compose !COMPOSE_EXTRA! down
 )
 
-:: ── Shutdown (reached after Ctrl+C) ─────────────────────────────
 title AI.DEN - Shutting Down
 echo.
-echo %Y%[STOP]%N% Shutting down AI.DEN...
-if "!GPU_MODE!"=="0" (
-    docker compose -f docker-compose.yml -f docker-compose.cpu.yml %COMPOSE_EXTRA% down >nul 2>nul
-) else (
-    docker compose %COMPOSE_EXTRA% down >nul 2>nul
-)
-echo %G%[DONE]%N% AI.DEN stopped. All containers removed.
+echo !Y![STOP]!N! AI.DEN stopped.
 echo.
 pause
-goto :eof
+exit /b 0
 
-REM Optional Claw CLI window — called from READY summary
+:: ---------------------------------------------------------------------------
 :maybe_launch_claw
 if /i "!AUTO_LAUNCH_CLAW!"=="false" exit /b 0
 if /i "!AUTO_LAUNCH_CLAW!"=="0" exit /b 0
 if /i "!AUTO_LAUNCH_CLAW!"=="no" exit /b 0
 if /i "!AUTO_LAUNCH_CLAW!"=="off" exit /b 0
-start "AIDEN — Claw" /D "%~dp0" cmd /k call launch-claw.bat
+start "AIDEN - Claw" /D "%~dp0" cmd /k call "%~dp0launch-claw.bat"
 exit /b 0
 
-:: ════════════════════════════════════════════════════════════════
-:: wait_for  <label> <url> <timeout_seconds>
-:: ════════════════════════════════════════════════════════════════
+:: ---------------------------------------------------------------------------
 :wait_for
-setlocal
+setlocal EnableDelayedExpansion
 set "LABEL=%~1"
 set "URL=%~2"
 set /a "TIMEOUT=%~3"
 set /a "ELAPSED=0"
-
-<nul set /p "=  Waiting for %B%%LABEL%%N% "
-
+<nul set /p "=  Waiting for !LABEL! "
 :wait_loop
 if !ELAPSED! geq !TIMEOUT! (
-    echo  %R%timeout%N%
+    echo  !R!timeout!N!
     endlocal
-    goto :eof
+    exit /b 0
 )
-curl -sf -o nul -m 2 "%URL%" >nul 2>&1
+curl -sf -o nul -m 3 "!URL!" >nul 2>&1
 if not errorlevel 1 (
-    echo  %G%ready%N%
+    echo  !G!ready!N!
     endlocal
-    goto :eof
+    exit /b 0
 )
 <nul set /p "=."
-timeout /t 2 /nobreak >nul
-set /a "ELAPSED+=2"
+timeout /t 3 /nobreak >nul
+set /a ELAPSED+=3
 goto :wait_loop
