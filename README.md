@@ -216,6 +216,19 @@ curl http://localhost:11434/api/chat \
 
 ---
 
+## Git repository
+
+AI.DEN is a **single monorepo** (one `.git` at the root). Vendored projects no longer keep their own `.git` folders — see **`UPSTREAM.md`** for origins and pinned commits.
+
+```powershell
+copy .env.example .env   # required — .env is not committed (secrets)
+git status
+```
+
+Details: **`docs/GIT.md`**. If you re-clone a subproject inside the tree, run **`scripts/remove-nested-git.ps1`**.
+
+---
+
 ## Cursor IDE Integration
 
 Use your local AI cluster as the backend for Cursor's AI features.
