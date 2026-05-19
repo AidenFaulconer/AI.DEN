@@ -407,6 +407,243 @@ _CMD_DENYLIST = tuple(
     )
 )
 
+_CTX_SIZE = _env_int("OLLAMA_MCP_CTX_SIZE", _env_int("AIDEN_CTX_SIZE", 16384))
+_CTX_RESERVE = _env_int("OLLAMA_MCP_CTX_RESERVE", _env_int("AIDEN_CTX_RESERVE", 3072))
+_TOOL_RESULT_MAX = _env_int("OLLAMA_MCP_TOOL_RESULT_MAX", 4000)
+_COMPACT_THRESHOLD = _env_float("OLLAMA_MCP_COMPACT_THRESHOLD", 0.82)
+_PRESERVE_RECENT = max(2, _env_int("OLLAMA_MCP_PRESERVE_RECENT", 6))
+_SESSION_DIR = WORKSPACE_ROOT / ".aiden-agent-sessions"
+
+
+def _max_prompt_tokens() -> int:
+    reserve = max(1024, _CTX_RESERVE)
+    return max(4096, _CTX_SIZE - reserve)
+
+
+def _message_text(m: dict[str, Any]) -> str:
+    c = m.get("content")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        parts: list[str] = []
+        for p in c:
+            if isinstance(p, dict) and isinstance(p.get("text"), str):
+                parts.append(p["text"])
+        return "\n".join(parts)
+    return ""
+
+
+def _estimate_messages_tokens(messages: list[dict[str, Any]]) -> int:
+    chars = sum(len(_message_text(m)) + 24 for m in messages)
+    return max(1, chars // 4)
+
+
+def _shrink_text(text: str, max_chars: int, marker: str) -> str:
+    if len(text) <= max_chars:
+        return text
+    head = int(max_chars * 0.5)
+    tail = max_chars - head - len(marker)
+    if tail < 120:
+        return text[:max_chars] + marker
+    return text[:head] + marker + text[-tail:]
+
+
+def _compress_tool_results(messages: list[dict[str, Any]], keep_recent_tools: int = 4) -> bool:
+    """Shrink old tool outputs so the loop can continue without losing the latest results."""
+    changed = False
+    tool_idxs = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+    for i in tool_idxs[:-keep_recent_tools] if len(tool_idxs) > keep_recent_tools else []:
+        m = messages[i]
+        text = _message_text(m)
+        if len(text) > _TOOL_RESULT_MAX:
+            m["content"] = _shrink_text(
+                text,
+                _TOOL_RESULT_MAX,
+                f"\n\n[AIDEN: earlier tool output compressed — was {len(text)} chars]",
+            )
+            changed = True
+    return changed
+
+
+def _drop_middle_with_summary(messages: list[dict[str, Any]], max_prompt: int) -> bool:
+    """Remove oldest non-system turns; insert a short marker so the model knows history was rolled."""
+    changed = False
+    est = _estimate_messages_tokens(messages)
+    dropped = 0
+    while est > max_prompt and len(messages) > 3:
+        drop_idx = None
+        for i in range(1, len(messages) - 1):
+            if messages[i].get("role") not in ("system", "developer"):
+                drop_idx = i
+                break
+        if drop_idx is None:
+            break
+        removed = messages.pop(drop_idx)
+        dropped += 1
+        changed = True
+        est = _estimate_messages_tokens(messages)
+        if dropped > 400:
+            break
+    if changed and dropped > 0:
+        summary = {
+            "role": "user",
+            "content": (
+                f"[AIDEN-CONTEXT] {dropped} earlier message(s) removed to stay within context. "
+                "Continue from recent tool results and the original task. "
+                "Re-read files or re-run commands if you need dropped detail."
+            ),
+        }
+        insert_at = 1
+        for i, m in enumerate(messages):
+            if m.get("role") in ("system", "developer"):
+                insert_at = i + 1
+            else:
+                break
+        messages.insert(insert_at, summary)
+    return changed
+
+
+def _heuristic_compress_messages(messages: list[dict[str, Any]]) -> bool:
+    max_prompt = _max_prompt_tokens()
+    if _estimate_messages_tokens(messages) <= int(max_prompt * _COMPACT_THRESHOLD):
+        return False
+    changed = _compress_tool_results(messages)
+    changed = _drop_middle_with_summary(messages, max_prompt) or changed
+    return changed
+
+
+async def _summarize_transcript(
+    model: str,
+    messages: list[dict[str, Any]],
+    options: dict[str, Any] | None,
+) -> str:
+    """LLM summary of dropped history (no tools)."""
+    lines: list[str] = []
+    for m in messages:
+        role = m.get("role", "?")
+        text = _message_text(m).strip()
+        if not text:
+            continue
+        if len(text) > 1500:
+            text = _shrink_text(text, 1500, "…")
+        lines.append(f"{role}: {text}")
+    blob = "\n".join(lines[-40:])
+    prompt = (
+        "Summarize this agent conversation for continuation. Include: goal, files touched, "
+        "commands run, errors, fixes applied, and what remains. Be dense, under 400 words.\n\n"
+        + blob
+    )
+    payload = _apply_generation_controls(
+        {"model": model, "messages": [{"role": "user", "content": prompt}]},
+        options=options,
+    )
+    _apply_chat_defaults(payload)
+    if OLLAMA_API_STYLE == "openai":
+        payload["max_tokens"] = min(900, _env_int("OLLAMA_MCP_MAX_TOKENS", 2048))
+    _, content, _ = await _chat_completion(payload)
+    return content.strip() or "Prior work occurred; details omitted for context limit."
+
+
+async def _compact_messages(
+    model: str,
+    messages: list[dict[str, Any]],
+    options: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Heuristic shrink, then LLM summary + keep recent tail."""
+    _heuristic_compress_messages(messages)
+    if _estimate_messages_tokens(messages) <= _max_prompt_tokens():
+        return messages
+
+    system_msgs = [m for m in messages if m.get("role") in ("system", "developer")]
+    tail = messages[-_PRESERVE_RECENT:]
+    middle = messages[len(system_msgs) : len(messages) - len(tail)]
+    if not middle:
+        return messages
+
+    summary = await _summarize_transcript(model, middle, options)
+    compacted: list[dict[str, Any]] = []
+    compacted.extend(system_msgs)
+    compacted.append(
+        {
+            "role": "user",
+            "content": f"[AIDEN-SESSION-SUMMARY]\n{summary}\n\nContinue the task from here.",
+        }
+    )
+    compacted.extend(tail)
+    logger.info(
+        "compacted context: %d -> %d msgs, ~%d tok",
+        len(messages),
+        len(compacted),
+        _estimate_messages_tokens(compacted),
+    )
+    return compacted
+
+
+def _is_context_overflow_error(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return (
+        "exceed_context" in text
+        or "context size" in text
+        or "n_ctx" in text
+        or "exceeds the available context" in text
+    )
+
+
+async def _chat_completion_safe(
+    model: str,
+    messages: list[dict[str, Any]],
+    options: dict[str, Any] | None,
+    *,
+    tools: list[dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any], str, list[Any] | None]:
+    """Chat with automatic compress + one retry on context overflow."""
+    working = [dict(m) for m in messages]
+    _heuristic_compress_messages(working)
+
+    payload = _apply_generation_controls({"model": model, "messages": working}, options=options)
+    _apply_chat_defaults(payload)
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
+
+    try:
+        return await _chat_completion(payload)
+    except httpx.HTTPStatusError as e:
+        if not _is_context_overflow_error(e):
+            raise
+        logger.warning("context overflow, compacting and retrying")
+        compacted = await _compact_messages(model, working, options)
+        payload["messages"] = compacted
+        return await _chat_completion(payload)
+
+
+def _session_path(session_id: str) -> Path:
+    safe = re.sub(r"[^a-zA-Z0-9_-]+", "_", session_id.strip())[:64]
+    _SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    return _SESSION_DIR / f"{safe}.json"
+
+
+def _load_session(session_id: str) -> list[dict[str, Any]] | None:
+    path = _session_path(session_id)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        msgs = data.get("messages")
+        return msgs if isinstance(msgs, list) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _save_session(session_id: str, messages: list[dict[str, Any]], meta: dict[str, Any] | None = None) -> None:
+    path = _session_path(session_id)
+    payload = {
+        "messages": messages,
+        "updated": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+        "meta": meta or {},
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
 
 def _resolve_workspace_path(path: str, *, must_exist: bool = False) -> Path:
     """Resolve path inside WORKSPACE_ROOT; reject escapes."""
@@ -638,22 +875,31 @@ async def _agent_loop(
     messages: list[dict[str, Any]],
     max_steps: int,
     options: dict[str, Any] | None = None,
+    *,
+    session_id: str | None = None,
 ) -> str:
     """Multi-turn tool loop: LLM → execute tools → feed results → repeat."""
     tool_defs = _tools_for_chat_payload()
     transcript: list[str] = []
+    compacted_once = False
 
     for step in range(1, max_steps + 1):
-        payload = _apply_generation_controls(
-            {"model": model, "messages": messages},
-            options=options,
-        )
-        _apply_chat_defaults(payload)
-        if tool_defs:
-            payload["tools"] = tool_defs
-            payload["tool_choice"] = "auto"
+        _heuristic_compress_messages(messages)
 
-        msg, content, tool_calls = await _chat_completion(payload)
+        try:
+            msg, content, tool_calls = await _chat_completion_safe(
+                model, messages, options, tools=tool_defs or None
+            )
+        except httpx.HTTPError as e:
+            if not compacted_once and _is_context_overflow_error(e):
+                messages[:] = await _compact_messages(model, messages, options)
+                compacted_once = True
+                msg, content, tool_calls = await _chat_completion_safe(
+                    model, messages, options, tools=tool_defs or None
+                )
+            else:
+                return f"Agent stopped at step {step}: {e}\n\n" + "\n".join(transcript)
+
         tool_calls = _normalize_tool_calls(tool_calls) if tool_calls else None
         if not tool_calls and content.strip():
             tool_calls = _tool_calls_from_content(content)
@@ -663,6 +909,8 @@ async def _agent_loop(
                 content = f"[Thinking] {msg.get('thinking')}\n\n{content}"
             header = f"[agent step {step}/{max_steps} complete]\n" if step > 1 else ""
             body = content or "(no content)"
+            if session_id:
+                _save_session(session_id, messages, {"last_step": step, "status": "done"})
             return header + body + ("\n\n---\n" + "\n".join(transcript) if transcript else "")
 
         assistant_msg: dict[str, Any] = {"role": "assistant", "content": content or None, "tool_calls": tool_calls}
@@ -677,14 +925,30 @@ async def _agent_loop(
                 targs = {}
             result = await _dispatch_tool(tname, targs)
             transcript.append(f"[{tname}] {result[:500]}{'...' if len(result) > 500 else ''}")
+            stored = result
+            if len(stored) > _TOOL_RESULT_MAX:
+                stored = _shrink_text(
+                    stored,
+                    _TOOL_RESULT_MAX,
+                    f"\n[AIDEN: full output {len(result)} chars — re-run tool if needed]",
+                )
             messages.append(
                 {
                     "role": "tool",
                     "tool_call_id": tc.get("id") or f"call_{step}_{tname}",
-                    "content": result,
+                    "content": stored,
                 }
             )
 
+        if session_id:
+            _save_session(
+                session_id,
+                messages,
+                {"last_step": step, "status": "running", "est_tokens": _estimate_messages_tokens(messages)},
+            )
+
+    if session_id:
+        _save_session(session_id, messages, {"last_step": max_steps, "status": "max_steps"})
     return (
         f"Agent stopped after {max_steps} steps (max reached).\n\n"
         + "\n".join(transcript)
@@ -854,23 +1118,38 @@ async def agent_chat(
     message: str,
     max_steps: int | None = None,
     options: dict[str, Any] | None = None,
+    session_id: str | None = None,
+    continue_session: bool = False,
 ) -> str:
     """Run a multi-step coding agent: calls the local model, executes tools, loops until done.
 
     Use for tasks that need read_file + run_command + grep (tests, debug, refactors).
-    Prefer over bare chat when the user wants actions, not just text.
+    Context is compressed automatically when near the limit so the loop can keep going.
 
     Args:
         model: Model id (e.g. from list_models).
         message: User task / question.
         max_steps: Max tool rounds (default OLLAMA_MCP_AGENT_MAX_STEPS, cap 20).
         options: Optional generation overrides (temperature, max_tokens, etc.).
+        session_id: Optional id to resume/save transcript under .aiden-agent-sessions/.
+        continue_session: If true and session_id set, append to saved messages instead of fresh start.
     """
     try:
         steps = max_steps if max_steps is not None else _AGENT_MAX_STEPS_DEFAULT
         steps = max(1, min(int(steps), 20))
-        messages: list[dict[str, Any]] = [{"role": "user", "content": message}]
-        return await _agent_loop(model, messages, steps, options=options)
+        messages: list[dict[str, Any]]
+        if session_id and continue_session:
+            loaded = _load_session(session_id)
+            messages = loaded if loaded else []
+            messages.append({"role": "user", "content": message})
+        else:
+            messages = [{"role": "user", "content": message}]
+        out = await _agent_loop(
+            model, messages, steps, options=options, session_id=session_id
+        )
+        if session_id:
+            out += f"\n\n[session_id={session_id}]"
+        return out
     except httpx.HTTPError as e:
         return f"Ollama request failed: {e}"
     except Exception as e:
