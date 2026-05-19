@@ -1,0 +1,50 @@
+# Memory caps for Docker Desktop (host has ~64 GB RAM — leave headroom for Windows).
+# Applied via: docker compose -f docker-compose.yml -f docker-compose.resources.yml up -d
+# Or set AIDEN_USE_RESOURCE_LIMITS=1 in .env (start-aiden.bat picks this up).
+
+x-router-mem: &router_mem
+  mem_limit: ${AIDEN_ROUTER_MEM_LIMIT:-512m}
+  memswap_limit: ${AIDEN_ROUTER_MEMSWAP_LIMIT:-512m}
+
+x-mcp-mem: &mcp_mem
+  mem_limit: ${AIDEN_MCP_MEM_LIMIT:-768m}
+  memswap_limit: ${AIDEN_MCP_MEMSWAP_LIMIT:-768m}
+
+x-webui-mem: &webui_mem
+  mem_limit: ${AIDEN_WEBUI_MEM_LIMIT:-4g}
+  memswap_limit: ${AIDEN_WEBUI_MEMSWAP_LIMIT:-4g}
+
+x-llm-mem: &llm_mem
+  mem_limit: ${AIDEN_LLM_MEM_LIMIT:-44g}
+  memswap_limit: ${AIDEN_LLM_MEMSWAP_LIMIT:-48g}
+
+x-hermes-mem: &hermes_mem
+  mem_limit: ${AIDEN_HERMES_MEM_LIMIT:-4g}
+  memswap_limit: ${AIDEN_HERMES_MEMSWAP_LIMIT:-4g}
+
+x-unsloth-mem: &unsloth_mem
+  mem_limit: ${AIDEN_UNSLOTH_MEM_LIMIT:-8g}
+  memswap_limit: ${AIDEN_UNSLOTH_MEMSWAP_LIMIT:-8g}
+
+services:
+  model-router:
+    <<: *router_mem
+
+  mcp-server:
+    <<: *mcp_mem
+
+  open-webui:
+    <<: *webui_mem
+
+  llamacpp:
+    <<: *llm_mem
+
+  hermes-agent:
+    <<: *hermes_mem
+
+  unsloth-studio:
+    <<: *unsloth_mem
+
+  clawcode:
+    mem_limit: ${AIDEN_CLAW_MEM_LIMIT:-2g}
+    memswap_limit: ${AIDEN_CLAW_MEMSWAP_LIMIT:-2g}

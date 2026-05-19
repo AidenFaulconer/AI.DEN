@@ -1,0 +1,15 @@
+# Line endings
+* text=auto
+*.sh text eol=lf
+*.bat text eol=crlf
+scripts/llamacpp-entrypoint.sh text eol=lf
+
+# Docker / nginx
+Dockerfile text eol=lf
+*.conf text eol=lf
+docker-compose*.yml text eol=lf
+
+# Large/binary (GGUF ignored via .gitignore — do not commit weights)
+*.bin -text
+*.pt -text
+*.safetensors -text

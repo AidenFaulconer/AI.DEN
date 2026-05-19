@@ -1,0 +1,18 @@
+# Hermes Agent — AI.DEN stack (mounted at /opt/data)
+# Docs: https://hermes-agent.nousresearch.com/docs/user-guide/docker
+
+model:
+  provider: custom
+  # Must match the name llama-server reports on /v1/models when using MTP.
+  # For Ollama-backed LLAMA port, use your .env LLAMA_MODEL value instead.
+  model: qwen3.6-27b-mtp
+  # model-router:8766 applies claw/caveman pipeline when LLAMA_BACKEND=llamacpp|ollama
+  base_url: http://model-router:8765/v1
+  api_key: "none"
+
+# Optional: point Hermes at the coder port (Qwen tool-calling) instead:
+# model:
+#   provider: custom
+#   model: qwen2.5-coder:7b-instruct
+#   base_url: http://model-router:8765/v1
+#   api_key: "none"

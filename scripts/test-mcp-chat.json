@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "chat",
+    "arguments": {
+      "model": "Qwen3.6-27B-MTP-UD-Q4_K_XL.gguf",
+      "messages": [{"role": "user", "content": "Say hello in one word."}],
+      "stream": false
+    }
+  }
+}

@@ -1,0 +1,69 @@
+# AI.DEN → VS Code Continue (generated template — run scripts/sync-continue-config.ps1)
+name: AI.DEN Local
+version: 1.0.0
+schema: v1
+
+models:
+  - name: AI.DEN Coder (Qwen3.6 + pipeline)
+    provider: openai
+    model: Qwen3.6-27B-MTP-UD-Q4_K_XL.gguf
+    apiBase: http://localhost:8765/v1
+    apiKey: ollama
+    capabilities:
+      - tool_use
+    roles:
+      - chat
+      - edit
+      - apply
+      - summarize
+    defaultCompletionOptions:
+      temperature: 0.15
+      maxTokens: 4096
+      contextLength: 16384
+    requestOptions:
+      timeout: 300000
+
+  - name: AI.DEN General (8766)
+    provider: openai
+    model: Qwen3.6-27B-MTP-UD-Q4_K_XL.gguf
+    apiBase: http://localhost:8766/v1
+    apiKey: ollama
+    capabilities:
+      - tool_use
+    roles:
+      - chat
+      - edit
+    defaultCompletionOptions:
+      temperature: 0.2
+      maxTokens: 4096
+    requestOptions:
+      timeout: 300000
+
+  # 27B autocomplete is slow — enable only if you accept latency
+  - name: AI.DEN Autocomplete (optional)
+    provider: openai
+    model: Qwen3.6-27B-MTP-UD-Q4_K_XL.gguf
+    apiBase: http://localhost:8765/v1
+    apiKey: ollama
+    roles:
+      - autocomplete
+    autocompleteOptions:
+      disable: true
+      debounceDelay: 600
+      maxPromptTokens: 1024
+      onlyMyCode: true
+
+rules:
+  - uses: file:///C:/Users/aidenleefaulconer/Downloads/vibe-coding/AI.DEN/continue/rules.md
+
+context:
+  - provider: code
+  - provider: diff
+  - provider: file
+  - provider: terminal
+
+mcpServers:
+  - name: AI.DEN Ollama MCP
+    type: streamable-http
+    url: http://localhost:5000/mcp
+    connectionTimeout: 10000

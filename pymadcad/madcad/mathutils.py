@@ -1,0 +1,703 @@
+# This file is part of pymadcad,  distributed under license LGPL v3
+
+''' Group of functions and math classes of pymadcad '''
+
+from __future__ import annotations
+from collections.abc import Callable
+
+from arrex import typedlist
+import arrex.glm # noqa: F401
+from pyglm import glm
+from pyglm.glm import (
+		acos, affineInverse, angle, angleAxis, axis, asin, atan, ceil, clamp, cos, cross,
+		step, lerp,
+		degrees, distance, distance2, dmat2, dmat2x3, dmat3, dmat3x2, dmat4,
+		dmat4x3, dot, dquat, dvec2, dvec3, dvec4, e, exp, floor, fmat2, fmat3,
+		fmat4, fquat, fvec1, fvec2, fvec3, fvec4, i64vec3, inverse, isinf,
+		isnan, ivec2, l1Norm, length, length2, log, mat3_cast, mat4x4, mix,
+		normalize, perspective, pow, radians, reflect, rotate, scale, sign,
+		sin, slerp, smoothstep, sqrt, tan, translate, transpose, u8vec4, uvec2,
+		uvec3, vec1
+	)
+
+# math most used functions and constants
+import math
+from math import (
+	inf, nan, atan2, dist, gcd, hypot, isclose, pi,
+)
+
+__all__ = [
+		"Axis", "COMPREC", "NUMPREC", "O", "Point", "Screw", "Vector", "X",
+		"Y", "Z", "acos", "affineInverse", "angle", "angleAxis", "anglebt", "arclength", "axis",
+		"asin", "atan", "atan2", "bisect", "ceil", "clamp", "comoment", "cos",
+		"cross", "degrees", "dirbase", "dist", "distance", "distance2",
+		"distance_aa", "distance_ae", "distance_pa", "distance_pe",
+		"distance_pt", "dmat2", "dmat2x3", "dmat3", "dmat3x2", "dmat4",
+		"dmat4x3", "dot", "dquat", "dvec2", "dvec3", "dvec4", "e", "exp",
+		"fbisect", "find", "floor", "fmat2", "fmat3", "fmat4", "fquat",
+		"fvec1", "fvec2", "fvec3", "fvec4", "gcd", "glm", "hypot", "i64vec3",
+		"imax", "inf", "interpol1", "interpol2", "intri_flat",
+		"intri_parabolic", "intri_smooth", "intri_sphere", "inverse",
+		"isclose", "isfinite", "isinf", "isnan", "ivec2", "l1Norm", "length",
+		"length2", "lerp", "linrange", "linstep", "log", "mat2", "mat3", "mat3_cast",
+		"mat4", "mat4x4", "mix", "nan", "noproject", "norm1", "norm2",
+		"normalize", "norminf", "perp", "perpdot", "perspective", "pi", "pow",
+		"project", "quat", "radians", "reflect", "rotate", "rotatearound",
+		"scale", "scaledir", "sign", "sin", "skew", "slerp", "smoothstep",
+		"sqrt", "step", "tan", "transform", "transformer", "translate", "transpose",
+		"typedlist", "u8vec4", "unproject", "unskew", "uvec2", "uvec3", "vec1",
+		"vec2", "vec3", "vec4"
+	]
+
+# alias definitions
+vec2 = dvec2
+mat2 = dmat2
+vec3 = dvec3
+mat3 = dmat3
+vec4 = dvec4
+mat4 = dmat4
+quat = dquat
+
+# aliases, for those who like them
+Vector = Point = vec3
+
+# norm L1  ie.  `abs(x) + abs(y) + abs(z)`
+norm1 = l1Norm
+# norm L2  ie.  `sqrt(x**2 + y**2 + z**2)`   the usual distance also known as euclidian distance or manhattan distance
+norm2 = length
+
+# numerical precision of floats used
+NUMPREC = 1e-13	# float64 here, so 14 decimals
+#NUMPREC = 1e-6	# float32 here, so 7 decimals, so 1e-6 when exponent is 1
+COMPREC = 1-NUMPREC
+
+# common base definition, for end user
+O = vec3(0,0,0)
+X = vec3(1,0,0)
+Y = vec3(0,1,0)
+Z = vec3(0,0,1)
+
+
+def isfinite(x):
+	''' Return false if x contains a `inf` or a `nan` '''
+	if isinstance(x, (int,float)):
+		return math.isfinite(x)
+	return not (glm.any(isinf(x)) or glm.any(isnan(x)))
+
+def norminf(x):
+	''' Norm L infinite  ie.  `max(abs(x), abs(y), abs(z))` '''
+	return max(glm.abs(x))
+
+# norm L1  ie.  `abs(x) + abs(y) + abs(z)`
+norm1 = l1Norm
+# norm L2  ie.  `sqrt(x**2 + y**2 + z**2)`   the usual distance also known as euclidian distance or manhattan distance
+norm2 = length
+
+def anglebt(x,y) -> float:
+	''' Angle between two vectors
+
+		![anglebt](../schemes/mathutils-anglebt.svg)
+
+		The result is not sensitive to the lengths of x and y
+	'''
+	n = length(x)*length(y)
+	return acos(min(1,max(-1, dot(x,y)/n)))	if n else 0
+	
+def arclength(p1, p2, n1, n2):
+	''' Length of an arc between p1 and p2, normal to the given vectors in respective points '''
+	c = max(0, dot(n1,n2))
+	if abs(c-1) < NUMPREC:	return 0
+	v = p1-p2
+	return sqrt(dot(v,v) / (2-2*c)) * acos(c)
+
+def project(vec, dir) -> vec3:
+	''' Component of `vec` along `dir`, equivalent to :code:`dot(vec,dir) / dot(dir,dir) * dir`
+
+		![project](../schemes/mathutils-project.svg)
+
+		The result is not sensitive to the length of `dir`
+	'''
+	try:	return dot(vec,dir) / dot(dir,dir) * dir
+	except ZeroDivisionError:	
+		if dot(vec,vec):		return vec3(nan)
+		else:					return vec3(0)
+		
+	
+def noproject(vec, dir) -> vec3:
+	''' Components of `vec` not along `dir`, equivalent to :code:`vec - project(vec,dir)`
+
+		![noproject](../schemes/mathutils-noproject.svg)
+
+		The result is not sensitive to the length of `dir`
+	'''
+	return vec - project(vec,dir)
+
+def unproject(vec, dir) -> vec3:
+	''' Return the vector in the given direction as if `vec` was its projection on it, equivalent to :code:`dot(vec,vec) / dot(vec,dir) * dir`
+
+		![unproject](../schemes/mathutils-unproject.svg)
+
+		The result is not sensitive to the length of `dir`
+	'''
+	try:	return dot(vec,vec) / dot(vec,dir) * dir
+	except ZeroDivisionError:	
+		if dot(vec,vec):		return vec3(nan)
+		else:					return vec3(0)
+
+def perpdot(a:vec2, b:vec2) -> float:
+	''' Dot product of a with perpendicular vector to b, equivalent to `dot(a, prep(b))` '''
+	return -a[1]*b[0] + a[0]*b[1]
+
+def perp(v:vec2) -> vec2:
+	''' Perpendicular vector to the given vector
+
+		![perp](../schemes/mathutils-perp.svg)
+	'''
+	return vec2(-v[1], v[0])
+	
+def dirbase(dir, align=vec3(1,0,0)):
+	''' Return a base using the given direction as z axis (and the nearer vector to align as x) '''
+	x = noproject(align, dir)
+	if not length2(x) > NUMPREC**2:
+		align = vec3(align[2],-align[0],align[1])
+		x = noproject(align, dir)
+	if not length2(x) > NUMPREC**2:
+		align = vec3(align[1],-align[2],align[0])
+		x = noproject(align, dir)
+	x = normalize(x)
+	y = cross(dir, x)
+	return x,y,dir
+
+def scaledir(dir, factor=None) -> mat3:
+	''' Return a mat3 scaling in the given direction, with the given factor (1 means original scale)
+
+		![scaledir](../schemes/mathutils-scaledir.svg)
+
+		If factor is None, the length of dir is used, but it can leads to precision loss on direction when too small.
+	'''
+	if factor is None:
+		factor = length(dir)
+		dir = dir / factor
+	return mat3(1) + (factor-1)*mat3(dir[0]*dir, dir[1]*dir, dir[2]*dir)
+	
+def rotatearound(angle, *args) -> mat4:
+	''' Return a transformation matrix for a rotation around an axis
+		
+		rotatearound(angle, axis)
+		rotatearound(angle, origin, dir)
+	'''
+	if len(args) == 1:		origin, dir = args[0]
+	elif len(args) == 2:	origin, dir = args
+	else:
+		raise TypeError('invalid use of rotatearound')
+	
+	r = mat3_cast(angleAxis(angle, dir))
+	m = mat4(r)
+	m[3] = vec4(origin - r*origin, 1)
+	return m
+
+def transform(*args) -> mat4:
+	''' Create an affine transformation matrix.
+		
+		Supported inputs:
+			:mat4:                                    obviously return it unmodified
+			:float:                                   scale using the given ratio 
+			:vec3:                                    translation only
+			:quat, mat3, mat4:                        rotation only
+			:(vec3,vec3), (vec3,mat3), (vec3,quat):   `(o,T)` translation and rotation
+			:(vec3,vec3,vec3):                        `(x,y,z)` base of vectors for rotation
+			:(vec3,vec3,vec3,vec3):                   `(o,x,y,z)` translation and base of vectors for rotation
+	'''
+	if len(args) == 1 and isinstance(args[0], (tuple,list)):
+		args = args[0]
+	if len(args) == 1:
+		if isinstance(args[0], mat4):	return args[0]
+		elif isinstance(args[0], (mat3, quat, int, float)):	return mat4(args[0])
+		elif isinstance(args[0], vec3):	return translate(args[0])
+	elif len(args) == 2:
+		if isinstance(args[0], vec3):
+			if   isinstance(args[1], (mat3, quat, int, float)):		m = mat4(args[1])
+			elif isinstance(args[1], vec3):		m = mat4(quat(args[1]))
+			m[3] = vec4(args[0], 1)
+			return m
+	elif isinstance(args[0], vec3) and len(args) == 3:			
+		return mat4(mat3(*args))
+	elif isinstance(args[0], vec3) and len(args) == 4:
+		m = mat4(mat3(*args[1:]))
+		m[3] = vec4(args[0], 1)
+		return m
+	
+	raise TypeError('a transformation must be a  mat3, mat4, quat, (O,mat3), (O,quat), (0,x,y,z), not {}'.format(args))
+	
+def transformer(trans):
+	''' Return an function to apply the given transform on vectors
+		
+		Supported inputs:
+			:float:	scale by the given ratio
+			:vec3:  translate the given position
+			:mat3:  rotate the given position
+			:quat:  rotate the given position
+			:mat4:  affine transform (rotate then translate)
+	'''
+	if isinstance(trans, (dquat, fquat)):		trans = mat3_cast(trans)
+	if callable(trans):													return trans
+	if isinstance(trans, (dvec3, fvec3)):								return lambda v: v + trans
+	if isinstance(trans, (dmat3, fmat3, dmat4, fmat4, int, float)):		return lambda v: trans * v
+	raise TypeError('a transformer must be a  vec3, quat, mat3, mat4 or callable, not {}'.format(trans))
+
+
+
+def interpol1(a, b, x):
+	''' 1st order polynomial interpolation '''
+	return (1-x)*a + x*b
+
+def interpol2(a, b, x):
+	''' 3rd order polynomial interpolation
+
+		![hermite](../schemes/mathutils-hermite.svg)
+
+		a and b are iterable of successive derivatives of a[0] and b[0]
+	'''
+	return (	2*x*(1-x)  * interpol1(a[0],b[0],x)		# linear component
+			+	x**2       * (b[0] + (1-x)*b[1])		# tangent
+			+	(1-x)**2   * (a[0] + x*a[1])	# tangent
+			)
+
+hermite = spline = interpol2
+
+def intri_flat(pts, a,b):
+	A,B,C = pts
+	c = 1-a-b
+	return a*A + b*B + c*C
+
+def intri_sphere(pts, ptangents, a,b, etangents=None):
+	''' Cubic interpolation over a triangle (2 dimension space), edges are guaranteed to fit an interpol2 curve using the edge tangents
+	
+	Note:
+		If the tangents lengths are set to the edge lengths, that version gives a result close to a sphere surface
+	'''
+	A,B,C = pts
+	ta,tb,tc = ptangents
+	c = 1-a-b
+	P = a*A + b*B + c*C +  a*b*c * (ta[0] + ta[1] + tb[0] + tb[1] + tc[0] + tc[1])
+	return (	0
+			+	a**2 * (A + b*ta[0] + c*ta[1])
+			+	b**2 * (B + c*tb[0] + a*tb[1])
+			+	c**2 * (C + a*tc[0] + b*tc[1])
+			+	2*(b*c + c*a + a*b) * P
+			)
+
+def intri_smooth(pts, ptangents, a,b):
+	''' Cubic interpolation over a triangle, edges are guaranteed to fit an interpol2 curve using the edge tangents
+	
+	Note:
+		If the tangents lengths are set to the edge lengths, that version gives a result that only blends between the curved edges, a less bulky result than `intri_sphere`
+	'''
+	A,B,C = pts
+	ta,tb,tc = ptangents
+	c = 1-a-b
+	return (	0
+			+	a**2 * (A + b*ta[0] + c*ta[1] + b*c*(ta[0]+ta[1]))
+			+	b**2 * (B + c*tb[0] + a*tb[1] + c*a*(tb[0]+tb[1]))
+			+	c**2 * (C + a*tc[0] + b*tc[1] + a*b*(tc[0]+tc[1]))
+			+	2*(b*c + c*a + a*b) * (a*A + b*B + c*C)
+			)
+
+def intri_parabolic(pts, ptangents, a,b, etangents=None):
+	''' Quadratic interpolation over a triangle, edges are NOT fitting an interpol2 curve '''
+	A,B,C = pts
+	ta,tb,tc = ptangents
+	c = 1-a-b
+	return (	0
+			+	a * (A + b*ta[0] + c*ta[1])
+			+	b * (B + c*tb[0] + a*tb[1])
+			+	c * (C + a*tc[0] + b*tc[1])
+			)
+
+
+# distances:
+
+distance_pp = distance
+
+def distance_pa(pt, axis):
+	''' Point - axis distance '''
+	return length(noproject(pt-axis[0], axis[1]))
+
+def distance_pe(pt, edge):
+	''' Point - edge distance '''
+	dir = edge[1]-edge[0]
+	l = length2(dir)
+	if not l:	return 0
+	x = dot(pt-edge[0], dir)/l
+	if   x < 0:	return distance(pt,edge[0])
+	elif x > 1:	return distance(pt,edge[1])
+	else:
+		return length(noproject(pt-edge[0], dir))
+
+def distance_aa(a1, a2):
+	''' Axis - axis distance '''
+	return length(project(a1[0]-a2[0], cross(a1[1], a2[1])))
+
+def distance_ae(axis, edge):
+	''' Axis - edge distance '''
+	x = axis[1]
+	z = normalize(cross(x, edge[1]-edge[0]))
+	y = cross(z,x)
+	s1 = dot(edge[0]-axis[0], y)
+	s2 = dot(edge[1]-axis[0], y)
+	if s1*s2 < 0:
+		return dot(edge[0]-axis[1], z)
+	elif abs(s1) < abs(s2):
+		return distance_pa(edge[0], axis)
+	else:
+		return distance_pa(edge[1], axis)
+		
+def distance_pt(p, triangle):
+	''' Point - triangle distance '''
+	normal = cross(triangle[1]-triangle[0], triangle[2]-triangle[0])
+	for i in range(3):
+		if dot(p-triangle[i-1], cross(triangle[i-2]-triangle[i-1], normal)) > 0:
+			return distance_pe(p, (triangle[i-1],triangle[i-2]))
+	return length(project(normal, p-triangle[0]))
+
+
+#-- algorithmic functions ---------
+
+
+
+def fbisect(f, start, stop, prec=None):
+	''' bisection over the parameter of a continuous real function, returning the place where the function switches from True to False
+		f(x) -> bool
+	'''
+	if not prec:	prec = abs(stop-start)*1e-3
+	
+	if not f(start):	return start
+	elif f(stop):		return stop
+
+	while abs(stop-start) > prec:
+		x = (start+stop)*0.5
+		if f(x):	start = x
+		else:		stop = x
+	return start
+
+def bisect(array, value, key=None):
+	if key is None:		key = lambda x:x
+
+	start, stop = 0, len(array)
+	while start < stop:
+		i = (start+stop)//2
+		v = key(array[i])
+		if v > value:	stop = i
+		elif v < value:	start = i+1
+		else:	return i
+	return start
+
+# TODO rename it first
+def find(iterator, predicate, default=None):
+	for e in iterator:
+		if predicate(e):	return e
+	return default
+			
+def imax(iterable, default=None):
+	''' Return the index of the max of the iterable '''
+	best = default
+	score = -inf
+	for i,o in enumerate(iterable):
+		if o >= score:
+			score = o
+			best = i
+	if best is None:	raise IndexError('iterable is empty')
+	return best
+
+def linstep(start, stop, x):
+	''' like smoothstep but with a linear ramp between `start` and `stop`
+
+		![linstep](../schemes/mathutils-step.svg)
+	'''
+	if x <= start:	return 0
+	if x >= stop:	return 1
+	return (x-start)/(stop-start)
+
+def linrange(start, stop=None, step=None, div=0, end=True):
+	''' Yield successive intermediate values between start and stop 
+		
+		stepping:
+		
+		- if `step` is given, it will be the amount between raised value until it gets over `stop`
+		- if `div` is given, it will be the number of intermediate steps between `start` and `stop` (with linear spacing)
+		
+		ending:
+		
+		- if `end` is True, it will stop iterate with value `stop` (or just before)
+		- if `end` is False, it will stop iterating just before `stop` and never with `stop`
+		
+	Examples:
+		>>> list(linrange(5, -5, div=1))
+		[5, 0, -5]
+			
+		>>> list(linrange(5, -5, div=10)
+			
+		
+	NOTE:  
+		If step is given and is not a multiple of `stop-start` then `end` has no influence
+	'''
+	if stop is None:	start, stop = 0, start
+	if step is None:	step = (stop-start)/(div+1)
+	elif step * (stop-start) < 0:	step = -step
+	if not end:			stop -= step
+	stop += NUMPREC*stop
+	
+	t = start
+	while (stop-t)*step >= 0:
+		yield t
+		t += step
+
+
+class Axis(object):
+	''' A 3D (zeroed) axis with an origin and a direction
+
+		![axis](../screenshots/primitives-axis.png)
+
+		Mathematically speaking, a 3D axis doesn't necessarily have an origin, since any point on it can be its start, but for implementation and convenience reasons this axis has
+
+	Note:
+
+		in previous madcad versions, axis were often tuples and not instances of this class. This is why this class has a `__getitem__` allowing to be used like a tuple. But this class should be used instead now.
+	'''
+	__slots__ = ('origin', 'direction', 'interval')
+	def __init__(self, origin, direction=None, interval=None):
+		if direction is None:
+			origin, direction = vec3(0), origin
+		self.origin, self.direction = origin, direction
+		self.interval = interval
+	
+	def __getitem__(self, i):
+		''' behave like the axis was a tuple (origin, direction) '''
+		if i==0:	return self.origin
+		elif i==1:	return self.direction
+		else:		raise IndexError('an axis has only 2 components')
+		
+	def flip(self) -> 'Axis':
+		''' switch the axis direction '''
+		return Axis(self.origin, -self.direction, self.interval)
+	
+	def offset(self, increment) -> 'Axis':
+		''' move the axis origin along its direction '''
+		return Axis(self.origin + self.direction*increment, self.direction, self.interval)
+		
+	def transform(self, transform) -> 'Axis':
+		''' move the axis by the given transformation '''
+		if isinstance(transform, (float,int)):		return Axis(transform*self.origin, self.direction, self.interval)
+		elif isinstance(transform, vec3):			return Axis(transform+self.origin, self.direction, self.interval)
+		elif isinstance(transform, (mat3, quat)):	return Axis(transform*self.origin, normalize(transform*self.direction), self.interval)
+		elif isinstance(transform, (mat4)):			return Axis(transform*self.origin, normalize(mat3(transform)*self.direction), self.interval)
+		raise TypeError('transform must be one of float, vec3, mat3, quat, mat4')
+	
+	slvvars = ('origin', 'direction')
+	def slv_tangent(self, pt):
+		return self.direction
+		
+	def __eq__(self, other):
+		return self is other or isinstance(other, Axis) and (
+			self.origin == other.origin and self.direction == other.direction
+			)
+		
+	def __repr__(self):
+		return 'Axis({}, {})'.format(self.origin, self.direction)
+	
+	def display(self, scene):
+		from .rendering.d3.marker import AxisDisplay
+		return AxisDisplay(scene, (self.origin, self.direction), self.interval)
+			
+def isaxis(obj):
+	''' Return True if the given object is considered to be an axis.
+		An axis can be an instance of `Axis` or a tuple `(vec3, vec3)`
+	'''
+	return isinstance(obj, Axis) or isinstance(obj, tuple) and len(obj)==2 and isinstance(obj[0],vec3) and isinstance(obj[1],vec3)
+
+
+
+class Screw:
+	''' A 3D torsor aka Screw - is a mathematical object defined as follow:
+		  * a resultant vector R
+		  * a moment vector field M
+
+		The moment M is a vectorial field function, satisfying the relationship:
+			M(A) = M(B) + cross(R, A-B)
+		
+		Therefore it is possible to represent a localized screw such as:
+		  * R = resultant
+		  * M(P) = moment vector at position P
+		
+		Torsor are useful for generalized solid mechanics to handle multiple variables of the same nature:
+		  * wrench (force screw):
+			  Screw(position, force, torque)
+		  * twist (velocity screw):
+			  Screw(position, angular_velocity, linear_velocity)
+		  * momentum (momentum screw):
+			  Screw(position, mass * linear_velocity_com, inertia * angular_velocity_com)
+			
+		  All these screws makes it possible to represent all these values independently from expression location
+	'''
+	location: vec3
+	resultant: vec3
+	moment: vec3
+	
+	def __init__(self, location, resultant, moment):
+		self.location = location
+		self.resultant = resultant
+		self.moment = moment
+	
+	def transform(self, transform:mat4) -> Screw:
+		''' change the screw from a frame to an other '''
+		orient = mat3(transform)
+		return Screw(
+			transform * self.location,
+			orient * self.resultant,
+			orient * self.moment,
+			)
+	
+	def locate(self, location:vec3) -> Screw:
+		''' relocate the screw at the given location
+		
+			this changes the resultant and moment vectors, but doesn't change the screw itself
+			
+		Warning:
+			this is different from translating the screw 
+		'''
+		return Screw(
+			location,
+			self.resultant,
+			self.moment + cross(self.resultant, location - self.location),
+			)
+	
+	def comoment(self, other:Screw) -> float:
+		''' screws comoment, performs relocation if necessary '''
+		other = other.locate(self.location)
+		return dot(self.moment, other.resultant) + dot(self.resultat * other.moment)
+		
+	def __add__(self, other:Screw) -> Screw:
+		''' screws addition, performs relocation if necessary '''
+		other = other.locate(self.location)
+		return Screw(
+			self.location,
+			self.resultant + other.resultant,
+			self.moment + other.moment,
+			)
+	def __sub__(self, other:Screw) -> Screw:
+		''' screws substraction, performs relocation if necessary '''
+		other = other.locate(self.location)
+		return Screw(
+			self.location,
+			self.resultant - other.resultant,
+			self.moment - other.moment,
+			)
+	def __neg__(self) -> Screw:
+		return Screw(
+			self.location,
+			-self.resultant,
+			-self.moment,
+			)
+			
+	def __mul__(self, other:float) -> Screw:
+		return Screw(
+			self.location,
+			self.resultant * other,
+			self.moment * other,
+			)	
+	def __div__(self, other:float) -> Screw:
+		return Screw(
+			self.location,
+			self.resultant / other,
+			self.moment / other,
+			)
+			
+	def __eq__(self, other:Screw) -> bool:
+		''' screws equality, performs relocation if necessary '''
+		other = other.locate(self.location)
+		return glm.all(self.moment == other.moment) and glm.all(self.resultant == other.resultant)
+			
+	def to_matrix(self, location=None) -> mat4:
+		''' convert the screw to its matrix form
+		
+			represents the relocate operation for any screw and the derivative of the rotation matrix for velocity screws
+		'''
+		base = self.locate(location or vec3(0))
+		return skew(base.resultant, base.moment)
+	
+	@staticmethod
+	def from_matrix(mat: mat3|mat4, location=None) -> Screw:
+		''' convert a velocity matrix into a screw at world location 0 '''
+		return Screw(location or vec3(0), *unskew(mat))
+	
+	@staticmethod
+	def from_rate(f:Callable[[float],mat3|mat4], t:float, dt=1e-6) -> Screw:
+		''' compute a Screw of a frame by rating the given function `f` at the given instant `t`
+		
+			`f` is supposed to
+			- take a time instant and return a frame matrix
+			- be continuous and `f(t-dt)` and `f(t+dt)` to exist
+		'''
+		return Screw.from_matrix((f(t+dt) - f(t-dt)) / (2*dt) @ affineInverse(f(t)))
+	
+	def __repr__(self):
+		return '{}(\n\t{}, \n\t{}, \n\t{})'.format(self.__class__.__name__, 
+			repr(self.location), repr(self.resultant), repr(self.moment))
+			
+	def display(self, scene):
+		# TODO draw resultant and moment vectors at the current location
+		raise NotImplementedError("In developement")
+
+
+def comoment(t1:Screw, t2:Screw) -> float:
+	''' Comomentum of screws:   `dot(M1, R2)  +  dot(M2, R1)`
+		
+		The result is independent of torsors location
+	'''
+	t2 = t2.locate(t1.location)
+	return dot(t1.moment, t2.resultant) + dot(t2.moment, t1.resultant)
+
+def skew(r:vec3, t:vec3=None) -> mat3|mat4:
+	''' skew matrix of 3D vector `v` (pre cross product matrix). it `t` is given, it provides a fourth column (usefull for affine transforms) 
+	
+		>>> r = vec3(...)
+		>>> a = vec3(...)
+		>>> cross(r, a) == skew(r) * a
+	'''
+	if t is None:
+		return mat3(
+			 0,   +r.z, -r.y,
+			-r.z,  0,   +r.x,
+			+r.y, -r.x,  0,
+			)
+	else:
+		return mat4(
+			 0,   +r.z, -r.y, 0,
+			-r.z,  0,   +r.x, 0,
+			+r.y, -r.x,  0,   0,
+			 t.x,  t.y,  t.z, 0,
+			)
+
+def unskew(m: mat3|mat4) -> vec3|tuple[vec3, vec3]:
+	''' vector(s) from which the given matrix is a skew matrix (approximated it it is not actually a skew matrix) 
+	
+		>>> r = mat3(...)
+		>>> unskew(skew(r)) == r
+	'''
+	if isinstance(m, mat3):
+		return vec3(
+			m[1][2] - m[2][1], 
+			m[2][0] - m[0][2],
+			m[0][1] - m[1][0],
+			) * 0.5
+	elif isinstance(m, mat4):
+		return (
+			vec3(
+				m[1][2] - m[2][1], 
+				m[2][0] - m[0][2],
+				m[0][1] - m[1][0],
+				) * 0.5,
+			vec3(m[3]),
+			)
+	else:
+		raise TypeError('unskew only supports mat3 and mat4')

@@ -1,0 +1,5 @@
+.env
+sessions/
+memories/
+logs/
+cron/

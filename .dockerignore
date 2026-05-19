@@ -1,0 +1,9 @@
+# Faster image builds — keep context lean
+**/target/
+**/node_modules/
+.git/objects/
+.git/logs/
+**/Thumbs.db
+**/.DS_Store
+ollama_data/
+open-webui_data/

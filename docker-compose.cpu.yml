@@ -1,0 +1,11 @@
+# CPU-only override — removes GPU reservation.
+# Use with: docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
+# Or:       start-aiden.bat cpu
+
+services:
+  llamacpp:
+    image: ${LLAMACPP_IMAGE_CPU:-havenoammo/llama:intel-server}
+    deploy:
+      resources:
+        reservations:
+          devices: []

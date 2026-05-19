@@ -1,0 +1,87 @@
+# ── Secrets (never commit) ───────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+credentials.json
+**/secrets/
+
+# ── Local overrides (optional) ─────────────────────────────────────
+.env.local
+
+# ── GGUF / model weights (download via models/README.md) ───────────
+models/*.gguf
+models/**/*.gguf
+models/.cache/
+
+# ── Docker named volumes / runtime data ──────────────────────────
+ollama_data/
+open-webui_data/
+
+# ── Agent / IDE session noise ────────────────────────────────────
+.claw/
+.cursor/projects/
+agent-transcripts/
+terminals/
+
+# ── OS / editor ──────────────────────────────────────────────────
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Python ───────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+.env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# ── Node (unsloth studio, etc.) ───────────────────────────────────
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+*.tsbuildinfo
+
+# ── Rust (claw-code-local) ───────────────────────────────────────
+**/target/
+**/*.rs.bk
+
+# ── Legacy path (if claw-code clone exists beside claw-code-local)
+claw-code/rust/target/
+
+# ── Jupyter / training artifacts ─────────────────────────────────
+.ipynb_checkpoints/
+wandb/
+mlruns/
+work/checkpoints/
+
+# ── Logs & temp ──────────────────────────────────────────────────
+*.log
+logs/
+tmp/
+temp/
+.cache/
+
+# ── Hermes runtime (keep config.yaml template in repo) ───────────
+hermes-data/sessions/
+hermes-data/*.db
+hermes-data/.cache/
+
+# ── Compose / local overrides (personal) ─────────────────────────
+docker-compose.override.yml
+compose.override.yml

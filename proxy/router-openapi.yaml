@@ -1,0 +1,377 @@
+openapi: 3.0.3
+info:
+  title: AI.DEN Model Router API
+  description: |
+    **Reverse proxy:** OpenResty forwards almost all paths to **Ollama** (`ollama:11434`).
+    See upstream [Ollama API](https://github.com/ollama/ollama/blob/main/docs/api.md).
+
+    **AIDEN injections:** For JSON bodies routed to **`/v1/chat/completions`**, **`/api/chat`**, **`/v1/completions`**, or **`/api/generate`**, this proxy may prepend a combined **prompt pipeline** (configured via `prompt-pipeline.json`) before forwarding. **Coder**, **general**, and **vision** sockets (defaults **8765**, **8766**, **8767**) also fill **`model`** from env when omitted.
+
+    **Passthrough:** All other URLs (examples: **`/api/tags`**, embeddings, blobs) are mirrored **unchanged** — not enumerated here.
+
+    **Interactive docs:** `GET /_aiden/swagger`
+
+  version: "1.0.0"
+
+servers:
+  - url: http://localhost:8765
+    description: Coder — aligns with `.env` `CODER_PORT` + implicit `CODER_MODEL` when `model` omitted
+  - url: http://localhost:8766
+    description: General — `LLAMA_PORT` + implicit `LLAMA_MODEL`
+  - url: http://localhost:8767
+    description: Vision — `VISION_PORT` + implicit `VISION_MODEL`
+  - url: http://localhost:11434
+    description: Routed gateway (`OLLAMA_PORT`). **`model`** required — use coder/general/vision defaults **8765 / 8766 / 8767** on those ports for implicit **`model`** when omitted via those listeners.
+
+tags:
+  - name: AI.DEN
+    description: Router contract (pipeline + Swagger)
+  - name: Chat completions
+    description: OpenAI-compatible chat paths (injections allowed)
+  - name: Legacy completions
+    description: Legacy OpenAI completions (injections allowed)
+  - name: Ollama chat
+    description: Native Ollama `/api/chat` (injections allowed)
+  - name: Ollama generate
+    description: Native Ollama `/api/generate` (injections allowed)
+  - name: Passthrough samples
+    description: Representative read-only probes (no body rewrite)
+
+paths:
+  /_aiden/swagger:
+    get:
+      tags: [AI.DEN]
+      summary: Swagger UI (browser)
+      description: Lightweight HTML loader (CDN-hosted Swagger UI) against this YAML.
+      operationId: getSwaggerUi
+      responses:
+        "200":
+          description: HTML page
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /_aiden/openapi.yaml:
+    get:
+      tags: [AI.DEN]
+      summary: OpenAPI specification (YAML)
+      description: Same document as shipped in-repo at `proxy/router-openapi.yaml`.
+      operationId: getOpenApiYaml
+      responses:
+        "200":
+          description: OpenAPI YAML
+          content:
+            application/yaml:
+              schema:
+                type: string
+
+  /_aiden/pipeline:
+    get:
+      tags: [AI.DEN]
+      summary: Current prompt pipeline
+      description: File-backed when `prompt-pipeline.json` is valid JSON with `stages`; else parses `PROMPT_PIPELINE`.
+      operationId: getPromptPipeline
+      responses:
+        "200":
+          description: Resolved pipeline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PipelineSnapshot"
+
+    post:
+      tags: [AI.DEN]
+      summary: Persist prompt pipeline
+      description: >
+        Validates `claw` / `caveman` only (others dropped). Writes `prompt-pipeline.json`; effective next LLM-bound request.
+
+        Bearer required iff `AIDEN_ADMIN_TOKEN` is non-empty on the container.
+      operationId: setPromptPipeline
+      security:
+        - BearerPipelineAdmin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PipelineUpdate"
+            examples:
+              defaultOrder:
+                value:
+                  stages: ["claw", "caveman"]
+              cavemanOnly:
+                value:
+                  stages: ["caveman"]
+              off:
+                value:
+                  stages: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PipelineUpdateOk"
+        "400":
+          description: Malformed JSON or missing `stages` table
+        "401":
+          description: Bearer token invalid or missing while admin token enforced
+        "500":
+          description: Writable file unavailable
+
+  /v1/chat/completions:
+    post:
+      tags: [Chat completions]
+      summary: OpenAI Chat Completions
+      operationId: openaiChatCompletions
+      description: Upstream-compat; injections skip if system already bears AIDEN markers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenAIChatCompletionRequest"
+      responses:
+        "200":
+          description: JSON or SSE stream (mirrors upstream)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/event-stream:
+              schema:
+                type: string
+
+  /v1/completions:
+    post:
+      tags: [Legacy completions]
+      summary: OpenAI legacy completions
+      operationId: openaiLegacyCompletions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              properties:
+                model:
+                  type: string
+                prompt:
+                  type: string
+                stream:
+                  type: boolean
+      responses:
+        "200":
+          description: Mirrors upstream
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /api/chat:
+    post:
+      tags: [Ollama chat]
+      summary: Ollama native chat API
+      operationId: ollamaApiChat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              required:
+                - model
+              properties:
+                model:
+                  type: string
+                messages:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/OllamaMessage"
+                stream:
+                  type: boolean
+                options:
+                  type: object
+                  additionalProperties: true
+      responses:
+        "200":
+          description: Mirrors upstream
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /api/generate:
+    post:
+      tags: [Ollama generate]
+      summary: Ollama native generate API
+      operationId: ollamaApiGenerate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              required:
+                - model
+              properties:
+                model:
+                  type: string
+                prompt:
+                  type: string
+                system:
+                  type: string
+                stream:
+                  type: boolean
+                options:
+                  type: object
+                  additionalProperties: true
+      responses:
+        "200":
+          description: Mirrors upstream
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /api/tags:
+    get:
+      tags: [Passthrough samples]
+      summary: List local models (Ollama)
+      description: Transparent proxy sample — no injection.
+      operationId: ollamaTags
+      responses:
+        "200":
+          description: Ollama JSON
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /api/version:
+    get:
+      tags: [Passthrough samples]
+      summary: Ollama version
+      operationId: ollamaVersion
+      responses:
+        "200":
+          description: Ollama JSON
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+components:
+  securitySchemes:
+    BearerPipelineAdmin:
+      type: http
+      scheme: bearer
+      description: Match `AIDEN_ADMIN_TOKEN` when set on the router container.
+
+  schemas:
+    PipelineStageType:
+      type: string
+      enum: [claw, caveman]
+
+    PipelineSnapshot:
+      type: object
+      required:
+        - stages
+        - source
+      properties:
+        stages:
+          type: array
+          items:
+            type: string
+        source:
+          type: string
+          enum: [file, env]
+
+    PipelineUpdate:
+      type: object
+      description: Requires either `stages` or `pipeline` (synonym handled by nginx); both arrays use the same item rules.
+      properties:
+        stages:
+          type: array
+          items:
+            type: string
+          description: Primary field; synonym `pipeline` accepted by nginx handler.
+        pipeline:
+          type: array
+          items:
+            type: string
+
+    PipelineUpdateOk:
+      type: object
+      required:
+        - ok
+      properties:
+        ok:
+          type: boolean
+        stages:
+          type: array
+          items:
+            $ref: "#/components/schemas/PipelineStageType"
+
+    OpenAIMessage:
+      type: object
+      additionalProperties: true
+      properties:
+        role:
+          type: string
+        content:
+          oneOf:
+            - type: string
+            - type: "null"
+            - type: array
+              items:
+                type: object
+                additionalProperties: true
+
+    OpenAIChatCompletionRequest:
+      type: object
+      additionalProperties: true
+      properties:
+        model:
+          type: string
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenAIMessage"
+        temperature:
+          type: number
+        top_p:
+          type: number
+        max_tokens:
+          type: integer
+        stream:
+          type: boolean
+        tools:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    OllamaMessage:
+      type: object
+      additionalProperties: true
+      properties:
+        role:
+          type: string
+        content:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: object
+                additionalProperties: true

@@ -1,0 +1,11 @@
+# Legacy overlay — llamacpp is now always-on; only Hermes needs the profile.
+# Use: COMPOSE_PROFILES=hermes  or  start-aiden.bat mtp
+
+services:
+  hermes-agent:
+    profiles: ["hermes"]
+
+  model-router:
+    environment:
+      - INFERENCE_BACKEND=llamacpp
+      - LLAMA_BACKEND=llamacpp

@@ -1,0 +1,233 @@
+services:
+  # ── Unsloth LLM Studio (optional — heavy; enable with COMPOSE_PROFILES=unsloth) ──
+  unsloth-studio:
+    profiles: ["unsloth"]
+    image: unsloth/unsloth:latest
+    container_name: unsloth-studio
+    restart: unless-stopped
+    ports:
+      - "8888:8888"
+      - "8887:8887"
+      - "2222:22"
+    environment:
+      - JUPYTER_PASSWORD=${JUPYTER_PASSWORD:-}
+    volumes:
+      - ./work:/unsloth-studio_data
+
+  # ── Ollama LLM Server — optional; disabled when using llama.cpp MTP only ─────
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: ollama
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   environment:
+  #     - OLLAMA_MAX_LOADED_MODELS=${MAX_LOADED_MODELS:-1}
+  #     - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-1}
+  #     - OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION:-1}
+  #     - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-10m}
+  #     - OLLAMA_HOST=0.0.0.0
+  #     - OLLAMA_NUM_THREADS=${OLLAMA_NUM_THREADS:-0}
+  #     - OLLAMA_MAX_VRAM=${OLLAMA_MAX_VRAM:-0}
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/11434'"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 12
+  #     start_period: 30s
+
+  # ── llama.cpp inference (MTP, draft model, or n-gram speculative decoding) ───
+  llamacpp:
+    image: ${LLAMACPP_IMAGE:-havenoammo/llama:cuda13-server}
+    container_name: llamacpp
+    restart: unless-stopped
+    ports:
+      - "${LLAMACPP_PORT:-8081}:8080"
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    volumes:
+      - ${LLAMACPP_MODELS_DIR:-./models}:/models:ro
+      - ./scripts/llamacpp-entrypoint.sh:/entrypoint.sh:ro
+    environment:
+      - LLAMACPP_GGUF=${LLAMACPP_GGUF:-Qwen3.6-27B-MTP-UD-Q4_K_XL.gguf}
+      - LLAMACPP_SPEC_MODE=${LLAMACPP_SPEC_MODE:-mtp}
+      - LLAMACPP_DRAFT_GGUF=${LLAMACPP_DRAFT_GGUF:-}
+      - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-16384}
+      - LLAMACPP_THREADS=${LLAMACPP_THREADS:-8}
+      - LLAMACPP_NGL=${LLAMACPP_NGL:--1}
+      - LLAMACPP_DRAFT_NGL=${LLAMACPP_DRAFT_NGL:--1}
+      - LLAMACPP_CACHE_K=${LLAMACPP_CACHE_K:-q8_0}
+      - LLAMACPP_CACHE_V=${LLAMACPP_CACHE_V:-q8_0}
+      - LLAMACPP_SPEC_DRAFT_N_MAX=${LLAMACPP_SPEC_DRAFT_N_MAX:-3}
+      - LLAMACPP_SPEC_DRAFT_CTX_SIZE=${LLAMACPP_SPEC_DRAFT_CTX_SIZE:-}
+      - LLAMACPP_NGRAM_SIZE_N=${LLAMACPP_NGRAM_SIZE_N:-12}
+      - LLAMACPP_NGRAM_SIZE_M=${LLAMACPP_NGRAM_SIZE_M:-48}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      # 503 while loading; pass only when /v1/models returns a model list (no wget in cuda12 image)
+      test: ["CMD-SHELL", "curl -s http://127.0.0.1:8080/v1/models | grep -q '\"data\"' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 600s
+
+  # ── Hermes Agent gateway — optional: COMPOSE_PROFILES=hermes ───────────────
+  hermes-agent:
+    profiles: ["hermes"]
+    image: nousresearch/hermes-agent:latest
+    container_name: hermes-agent
+    restart: unless-stopped
+    command: gateway run
+    ports:
+      - "${HERMES_GATEWAY_PORT:-8642}:8642"
+      - "${HERMES_DASHBOARD_PORT:-9119}:9119"
+    volumes:
+      - ./hermes-data:/opt/data
+    environment:
+      - API_SERVER_ENABLED=${HERMES_API_SERVER_ENABLED:-true}
+      - API_SERVER_HOST=0.0.0.0
+      - API_SERVER_KEY=${HERMES_API_SERVER_KEY:-aiden-local-hermes-api-key}
+      - API_SERVER_CORS_ORIGINS=${HERMES_API_CORS_ORIGINS:-*}
+      - HERMES_DASHBOARD=${HERMES_DASHBOARD:-0}
+      - HERMES_DASHBOARD_HOST=0.0.0.0
+      - HERMES_DASHBOARD_PORT=9119
+    depends_on:
+      model-router:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8642/health >/dev/null 2>&1 || wget -qO- http://127.0.0.1:8642/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
+
+  # ── Model Router — claw + caveman pipeline on all inference ports ────────────
+  model-router:
+    image: openresty/openresty:alpine
+    container_name: model-router
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+      - "${CODER_PORT:-8765}:8765"
+      - "${LLAMA_PORT:-8766}:8766"
+      - "${VISION_PORT:-8767}:8767"
+    volumes:
+      - ./proxy/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
+      - ./proxy/caveman-system.txt:/usr/local/openresty/nginx/conf/caveman-system.txt:ro
+      - ./proxy/claw-system.txt:/usr/local/openresty/nginx/conf/claw-system.txt:ro
+      - ./proxy/aiden-pipeline-admin.conf:/usr/local/openresty/nginx/conf/aiden-pipeline-admin.conf:ro
+      - ./proxy/router-openapi.yaml:/usr/local/openresty/nginx/conf/router-openapi.yaml:ro
+      - ./proxy/swagger.html:/usr/local/openresty/nginx/conf/swagger.html:ro
+      - ./proxy/prompt-pipeline.json:/usr/local/openresty/nginx/conf/prompt-pipeline.json
+    environment:
+      - CODER_MODEL=${CODER_MODEL:-qwen2.5-coder:7b}
+      - LLAMA_MODEL=${LLAMA_MODEL:-llama3.1:8b}
+      - VISION_MODEL=${VISION_MODEL:-gemma4}
+      - PROMPT_PIPELINE=${PROMPT_PIPELINE:-claw,caveman}
+      - AIDEN_ADMIN_TOKEN=${AIDEN_ADMIN_TOKEN:-}
+      - INFERENCE_BACKEND=${INFERENCE_BACKEND:-llamacpp}
+      - LLAMA_BACKEND=${LLAMA_BACKEND:-llamacpp}
+      - AIDEN_CTX_SIZE=${LLAMACPP_CTX_SIZE:-16384}
+      - AIDEN_CTX_RESERVE=${AIDEN_CTX_RESERVE:-4096}
+      - AIDEN_MAX_MSG_CHARS=${AIDEN_MAX_MSG_CHARS:-24000}
+    depends_on:
+      llamacpp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8765/_aiden/pipeline >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 10s
+    restart: unless-stopped
+
+  # ── Claw CLI (clawcode) — launch via launch-claw.bat ─────────────────────────
+  clawcode:
+    profiles: ["claw"]
+    build:
+      context: .
+      dockerfile: claw-code-local/Dockerfile
+    image: aiden-clawcode:local
+    stdin_open: true
+    tty: true
+    working_dir: /workspace
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - .:/workspace
+    environment:
+      OPENAI_API_KEY: "ollama"
+      OPENAI_BASE_URL: "http://host.docker.internal:${CODER_PORT:-8765}/v1"
+      ANTHROPIC_API_KEY: "dummy"
+
+  # ── Open WebUI ───────────────────────────────────────────────────────────────
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    ports:
+      - "${WEBUI_PORT:-8080}:8080"
+    environment:
+      - OLLAMA_BASE_URL=http://model-router:11434
+      - WEBUI_AUTH=${WEBUI_AUTH:-false}
+      - ENABLE_SIGNUP=true
+      - ENABLE_OLLAMA_API=true
+    volumes:
+      - open-webui_data:/app/backend/data
+    depends_on:
+      model-router:
+        condition: service_healthy
+      llamacpp:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── MCP Server (ollama-mcp) — use CODER port for pipeline-aware chat ────────
+  mcp-server:
+    build: ./ollama-mcp
+    container_name: mcp-server
+    ports:
+      - "${MCP_PORT:-5000}:5000"
+    volumes:
+      - .:/workspace:rw
+    environment:
+      - OLLAMA_BASE_URL=http://model-router:${CODER_PORT:-8765}
+      - OLLAMA_API_STYLE=openai
+      - OLLAMA_MCP_HOST=0.0.0.0
+      - OLLAMA_MCP_PORT=5000
+      - OLLAMA_MCP_TRANSPORT=streamable-http
+      - OLLAMA_MCP_WORKSPACE=/workspace
+      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-300}
+      - OLLAMA_MCP_TEMPERATURE=${OLLAMA_MCP_TEMPERATURE:-0.15}
+      - OLLAMA_MCP_TOP_P=${OLLAMA_MCP_TOP_P:-0.9}
+      - OLLAMA_MCP_MAX_TOKENS=${OLLAMA_MCP_MAX_TOKENS:-2048}
+      - OLLAMA_MCP_TOOL_RETRY=${OLLAMA_MCP_TOOL_RETRY:-1}
+      - OLLAMA_MCP_AGENT_MAX_STEPS=${OLLAMA_MCP_AGENT_MAX_STEPS:-8}
+      - OLLAMA_MCP_CMD_TIMEOUT=${OLLAMA_MCP_CMD_TIMEOUT:-120}
+    depends_on:
+      model-router:
+        condition: service_healthy
+      llamacpp:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  ollama_data:
+    name: aiden_ollama_data
+  open-webui_data:
+    name: aiden_open_webui_data
