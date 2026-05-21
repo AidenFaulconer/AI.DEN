@@ -44,14 +44,14 @@ Then re-run `.\scripts\sync-continue-config.ps1`.
 1. **Prefer `@tree`** for “what’s in the repo?” — already enabled in `continue/config.yaml`.
 2. **Use `@repo-map` on a subfolder** — in the `@` menu choose repo-map, then pick a **subfolder** (e.g. `frontend/`), not “Entire codebase”.
 3. **Turn off signatures** on 4GB (`includeSignatures: false`) — saves thousands of tokens vs full API outlines.
-4. **Router cap** — `AIDEN_MAX_PROMPT_TOKENS=7680` trims oversized prompts before llama.cpp (see `docs/hardware-tuning.md`).
+4. **Router cap** — `AIDEN_MAX_PROMPT_TOKENS=6144` trims oversized prompts before llama.cpp (see `docs/hardware-tuning.md`).
 5. **MCP fallback** — `workspace_info`, `list_dir`, `glob_files` for paths when you skip `@repo-map`.
 
 ## When repo-map was disabled
 
 It was commented out only to stop **~9k-token** prompts on 4GB VRAM. With ignores + no signatures + subfolder selection, re-enable it via sync (default in template).
 
-Check router header **`X-AIDEN-Prompt-Tokens-Est`** after a message; aim for **&lt; 8000** on a 3050 Ti.
+Check router header **`X-AIDEN-Prompt-Tokens-Est`** after a message; aim for **&lt; 6144** on a 3050 Ti.
 
 ## `read_file` too large (8215 vs 8192)
 

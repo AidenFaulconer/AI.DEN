@@ -37,7 +37,7 @@ Commit **`6200e57`** (“reduce CPU usage”) slowed **prompt eval** on this lap
 
 **499** in your log = client (Continue) cancelled after ~4+ min — not a server crash.
 
-**Recovery (now default in `.env`):** `LLAMACPP_SPEC_MODE=mtp`, `LLAMACPP_THREADS=14`, empty `LLAMACPP_FIT_TARGET`, batch `512`/`256`, `AIDEN_CHARS_PER_TOKEN=2.8`, `AIDEN_PROMPT_ESTIMATE_MARGIN=0.90`.
+**Recovery (now default in `.env`):** `LLAMACPP_SPEC_MODE=mtp`, `LLAMACPP_THREADS=14`, `LLAMACPP_FIT_TARGET=768`, batch `512`/`256`, `AIDEN_CHARS_PER_TOKEN=2.8`, `AIDEN_PROMPT_ESTIMATE_MARGIN=0.90`.
 
 ## Less CPU usage (RTX 3050 Ti / 4GB)
 
@@ -60,7 +60,7 @@ For **minimum CPU**, use a smaller coder model (7B–14B) or cloud API — 27B Q
 ## 4 GB VRAM profile — speed (default after regression fix)
 
 ```env
-LLAMACPP_FIT_TARGET=
+LLAMACPP_FIT_TARGET=768
 LLAMACPP_CTX_SIZE=16384
 LLAMACPP_THREADS=14
 LLAMACPP_SPEC_MODE=mtp

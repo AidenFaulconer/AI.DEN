@@ -12,7 +12,7 @@ You run against the local AI.DEN stack (model-router + llama.cpp), not cloud API
 ## Low-CPU / context (4GB — current `.env`)
 
 - **Router** trims prompts (`AIDEN_MAX_PROMPT_TOKENS=6144`); oversized requests may return **413** — start a new chat, drop `@repo-map`, use `@tree`.
-- **`contextLength: 12288`** after sync — matches `LLAMACPP_CTX_SIZE` / `AIDEN_CONTINUE_CONTEXT_LENGTH`.
+- **`contextLength: 16384`** after sync — matches `LLAMACPP_CTX_SIZE` / `AIDEN_CONTINUE_CONTEXT_LENGTH`.
 - **`@repo-map`** — pick a **subfolder** only; signatures **off** when `LLAMACPP_FIT_TARGET` ≤ 768.
 - Details: `docs/hardware-tuning.md`
 

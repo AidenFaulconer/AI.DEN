@@ -1,6 +1,6 @@
 # AI.DEN → VS Code Continue — sync via scripts/sync-continue-config.ps1
 # After .env changes: .\scripts\sync-continue-config.ps1 then reload Continue.
-# 4GB profile: ctx 12288, router :8765 (not :8081), @repo-map signatures off, prompt cap ~6144.
+# 4GB profile: ctx 16384, router :8765 (not :8081), @repo-map signatures off, prompt cap ~6144.
 name: AI.DEN Local
 version: 1.0.0
 schema: v1
@@ -38,7 +38,7 @@ models:
         - Workspace = MCP roots. If VS Code root is AI.DEN only, prefix sibling apps:
           House-App/frontend/src/components/... (not bare frontend/... under AI.DEN).
         - Prefer opening the app repo as the VS Code folder when editing that app.
-        - Large files: read_file with start_line and end_line (contextLength is 12k).
+        - Large files: read_file with start_line and end_line (contextLength is 16k).
 
         Context / CPU (RTX 3050 Ti 4GB):
         - Prefer @tree or @repo-map on a subfolder — not whole monorepo.
