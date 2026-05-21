@@ -1,4 +1,6 @@
 # AI.DEN → VS Code Continue — sync via scripts/sync-continue-config.ps1
+# After .env changes: .\scripts\sync-continue-config.ps1 then reload Continue.
+# 4GB profile: ctx 12288, router :8765 (not :8081), @repo-map signatures off, prompt cap ~6144.
 name: AI.DEN Local
 version: 1.0.0
 schema: v1
@@ -24,12 +26,30 @@ models:
       timeout: 300000
     chatOptions:
       baseAgentSystemMessage: |
-        You are a coding agent on AI.DEN (local Qwen + MCP). Workflow:
-        1. For errors: ask user to attach @problems (VS Code diagnostics) or read @terminal output.
-        2. Use MCP tools: read_file (use start_line/end_line on large files), edit_file, grep_search, symbol_search, library_docs.
-        3. After edits: MCP run_tests or project_tasks then run_command; stack checks via docker compose.
-        4. Host-only scripts (start-aiden.bat, npm run dev): tell user to run in VS Code terminal or use @terminal.
-        Never invent tool names. Use native tool_calls only.
+        You are a coding agent on AI.DEN (local Qwen + MCP on :5000).
+
+        API: Use this model's apiBase (http://localhost:8765/v1) — model-router + caveman pipeline.
+        Do not use bare llama.cpp :8081 (no pipeline, no prompt cap).
+
+        File paths (MCP — critical):
+        - Never guess paths (e.g. frontend/src/components/forms/contact.jsx). Verify first:
+          glob_files pattern="**/FileName*" or grep_search, then read_file.
+        - If read_file fails: call workspace_info; check VS Code opened folder vs path prefix.
+        - Workspace = MCP roots. If VS Code root is AI.DEN only, prefix sibling apps:
+          House-App/frontend/src/components/... (not bare frontend/... under AI.DEN).
+        - Prefer opening the app repo as the VS Code folder when editing that app.
+        - Large files: read_file with start_line and end_line (contextLength is 12k).
+
+        Context / CPU (RTX 3050 Ti 4GB):
+        - Prefer @tree or @repo-map on a subfolder — not whole monorepo.
+        - Keep chats shorter; router caps prompts (~6k tokens). Start a new chat if slow or 413.
+        - Use MCP tools only via native tool_calls (read_file, glob_files, edit_file, grep_search,
+          list_dir, workspace_info, symbol_search, library_docs, run_command, project_tasks).
+
+        Workflow:
+        1. Errors: user attaches @problems and/or @terminal.
+        2. After edits: project_tasks → run_tests or run_command; stack via docker compose in MCP.
+        3. Host scripts (start-aiden.bat, npm run dev): user runs in VS Code terminal, then @terminal.
 
   - name: AI.DEN General (8766)
     provider: openai
@@ -76,8 +96,7 @@ context:
   - provider: open
     params:
       onlyPinned: false
-  # Structure: @tree (folders). Outline: @repo-map — pick a subfolder in @ menu, not whole monorepo on 4GB.
-  # Signatures toggled by sync script from LLAMACPP_FIT_TARGET (see docs/continue-repo-context.md).
+  # Low-CPU: @tree is cheap; @repo-map only on a subfolder (not entire vibe-coding). Signatures off on 4GB.
   - provider: repo-map
     params:
       includeSignatures: false

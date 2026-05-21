@@ -9,6 +9,13 @@ You run against the local AI.DEN stack (model-router + llama.cpp), not cloud API
 - Model id must match `GET http://localhost:8765/v1/models` (GGUF filename when using llama.cpp).
 - Do not point Continue at bare `:8081` if you want the prompt pipeline.
 
+## Low-CPU / context (4GB — current `.env`)
+
+- **Router** trims prompts (`AIDEN_MAX_PROMPT_TOKENS=6144`); oversized requests may return **413** — start a new chat, drop `@repo-map`, use `@tree`.
+- **`contextLength: 12288`** after sync — matches `LLAMACPP_CTX_SIZE` / `AIDEN_CONTINUE_CONTEXT_LENGTH`.
+- **`@repo-map`** — pick a **subfolder** only; signatures **off** when `LLAMACPP_FIT_TARGET` ≤ 768.
+- Details: `docs/hardware-tuning.md`
+
 ## Repo context (@tree / @repo-map)
 
 - **`@tree`** — folder structure (low token cost).
@@ -44,9 +51,9 @@ Use **only** these names via native tool_calls (never print XML in chat/thought 
 | Task | MCP tool | Example args |
 |------|----------|----------------|
 | Wrong project / paths fail | `workspace_info` | (no args) — shows mounted root |
-| Find files | `glob_files` | `pattern: "**/config.yaml"` |
-| List directory | `list_dir` | `path: "continue"` or `path: "."` |
-| Read file | `read_file` | `path: "frontend/src/foo.jsx"` — large files: `start_line` / `end_line` |
+| Find files (before read_file) | `glob_files` | `pattern: "**/contact*"` or `**/ListingBrowserTab.jsx"` |
+| List directory | `list_dir` | `path: "continue"` or `path: "House-App/frontend/src/components"` |
+| Read file | `read_file` | Only after glob confirms path; large files: `start_line` / `end_line` |
 | Shell | `run_command` | `command: "dir continue"` |
 | Compile/deprecation fix | `web_search` | `query: "Rust E0382 borrow moved"` |
 | Library API docs (free) | `library_docs` | `library: "react"`, `query: "useEffect cleanup"`, `ecosystem: npm` |

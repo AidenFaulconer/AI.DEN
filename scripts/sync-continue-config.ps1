@@ -30,7 +30,7 @@ $llamaModel = Get-EnvValue "LLAMA_MODEL" $coderModel
 $coderPort = Get-EnvValue "CODER_PORT" "8765"
 $llamaPort = Get-EnvValue "LLAMA_PORT" "8766"
 $mcpPort = Get-EnvValue "MCP_PORT" "5000"
-$llamaCtx = Get-EnvValue "LLAMACPP_CTX_SIZE" "16384"
+$llamaCtx = Get-EnvValue "LLAMACPP_CTX_SIZE" "12288"
 # Continue contextLength gates read_file max size; router still trims prompts (AIDEN_MAX_PROMPT_TOKENS).
 $ctxSize = Get-EnvValue "AIDEN_CONTINUE_CONTEXT_LENGTH" $llamaCtx
 $maxTokens = Get-EnvValue "OLLAMA_MCP_MAX_TOKENS" "1536"
@@ -83,6 +83,6 @@ Write-Host "Wrote Continue config: $dest"
 Write-Host "  Coder: http://localhost:${coderPort}/v1  model=$coderModel  ctx=$ctxSize"
 Write-Host "  MCP:   http://localhost:${mcpPort}/mcp"
 Write-Host "  @repo-map includeSignatures=$repoSigs  (FIT_TARGET=$fitTarget)"
-Write-Host '  Use Agent mode + @problems @tree @repo-map (subfolder) - docs/continue-repo-context.md'
+Write-Host '  Agent mode: glob_files before read_file; @tree or @repo-map subfolder only - docs/continue-repo-context.md'
 Write-Host '  Claw terminal: launch-claw.bat  |  docs/claw-with-continue.md'
 Write-Host "Reload Continue in VS Code after stack is up."
