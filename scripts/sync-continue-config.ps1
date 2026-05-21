@@ -20,9 +20,9 @@ function Get-EnvValue([string]$key, [string]$default = "") {
     return $default
 }
 
-function To-FileUri([string]$path) {
-    $p = ($path -replace '\\', '/') -replace ' ', '%20'
-    return "file:///$p"
+# Continue on Windows breaks file:///C:/... (ENOENT C:\C:\...). Use forward-slash absolute paths.
+function To-ContinuePath([string]$path) {
+    return (Resolve-Path -LiteralPath $path).Path -replace '\\', '/'
 }
 
 $coderModel = Get-EnvValue "CODER_MODEL" "Qwen3.6-27B-MTP-UD-Q4_K_XL.gguf"
@@ -40,11 +40,12 @@ if ($repoSigs -eq "") {
     $repoSigs = if ($fitTarget -gt 768) { "true" } else { "false" }
 }
 
-$rulesUri = To-FileUri (Join-Path $repoRoot "continue\rules.md")
-$agentUri = To-FileUri (Join-Path $repoRoot "continue\agent-workflow.md")
-$promptFix = To-FileUri (Join-Path $repoRoot "continue\prompts\fix-errors.md")
-$promptTest = To-FileUri (Join-Path $repoRoot "continue\prompts\run-tests.md")
-$promptStack = To-FileUri (Join-Path $repoRoot "continue\prompts\start-stack.md")
+$rulesPath = To-ContinuePath (Join-Path $repoRoot "continue\rules.md")
+$agentPath = To-ContinuePath (Join-Path $repoRoot "continue\agent-workflow.md")
+$promptFix = To-ContinuePath (Join-Path $repoRoot "continue\prompts\fix-errors.md")
+$promptTest = To-ContinuePath (Join-Path $repoRoot "continue\prompts\run-tests.md")
+$promptStack = To-ContinuePath (Join-Path $repoRoot "continue\prompts\start-stack.md")
+$promptClaw = To-ContinuePath (Join-Path $repoRoot "continue\prompts\claw-terminal.md")
 
 if (-not (Test-Path $continueDir)) {
     New-Item -ItemType Directory -Path $continueDir | Out-Null
@@ -60,14 +61,20 @@ $content = $content -replace 'contextLength: \d+', "contextLength: $ctxSize"
 $content = $content -replace 'maxTokens: \d+', "maxTokens: $maxTokens"
 $content = $content -replace 'includeSignatures: (true|false)', "includeSignatures: $repoSigs"
 
-# Rewrite all file:// rules/prompts to this machine's repo path
-$content = $content -replace 'file:///[^`\r\n]+/continue/rules\.md', $rulesUri
-$content = $content -replace 'file:///[^`\r\n]+/continue/agent-workflow\.md', $agentUri
-$content = $content -replace 'file:///[^`\r\n]+/continue/prompts/fix-errors\.md', $promptFix
-$content = $content -replace 'file:///[^`\r\n]+/continue/prompts/run-tests\.md', $promptTest
-$content = $content -replace 'file:///[^`\r\n]+/continue/prompts/start-stack\.md', $promptStack
-$promptClaw = To-FileUri (Join-Path $repoRoot "continue\prompts\claw-terminal.md")
-$content = $content -replace 'file:///[^`\r\n]+/continue/prompts/claw-terminal\.md', $promptClaw
+# Absolute paths (no file://) — avoids Windows C:\C:\ bug in Continue
+$content = $content -replace 'uses: continue/rules\.md', "uses: $rulesPath"
+$content = $content -replace 'uses: continue/agent-workflow\.md', "uses: $agentPath"
+$content = $content -replace 'uses: continue/prompts/fix-errors\.md', "uses: $promptFix"
+$content = $content -replace 'uses: continue/prompts/run-tests\.md', "uses: $promptTest"
+$content = $content -replace 'uses: continue/prompts/start-stack\.md', "uses: $promptStack"
+$content = $content -replace 'uses: continue/prompts/claw-terminal\.md', "uses: $promptClaw"
+# Legacy file:// entries from older templates
+$content = $content -replace 'uses: file:///[^`\r\n]+/continue/rules\.md', "uses: $rulesPath"
+$content = $content -replace 'uses: file:///[^`\r\n]+/continue/agent-workflow\.md', "uses: $agentPath"
+$content = $content -replace 'uses: file:///[^`\r\n]+/continue/prompts/fix-errors\.md', "uses: $promptFix"
+$content = $content -replace 'uses: file:///[^`\r\n]+/continue/prompts/run-tests\.md', "uses: $promptTest"
+$content = $content -replace 'uses: file:///[^`\r\n]+/continue/prompts/start-stack\.md', "uses: $promptStack"
+$content = $content -replace 'uses: file:///[^`\r\n]+/continue/prompts/claw-terminal\.md', "uses: $promptClaw"
 
 Set-Content -Path $dest -Value $content -Encoding UTF8
 

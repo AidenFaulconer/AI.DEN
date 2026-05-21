@@ -84,8 +84,8 @@ models:
       onlyMyCode: true
 
 rules:
-  - uses: file:///C:/Users/aidenleefaulconer/Downloads/vibe-coding/AI.DEN/continue/rules.md
-  - uses: file:///C:/Users/aidenleefaulconer/Downloads/vibe-coding/AI.DEN/continue/agent-workflow.md
+  - uses: continue/rules.md
+  - uses: continue/agent-workflow.md
 
 # @-mention context (type @ in Continue chat/agent)
 context:
@@ -106,10 +106,10 @@ context:
   - provider: tree
 
 prompts:
-  - uses: file:///C:/Users/aidenleefaulconer/Downloads/vibe-coding/AI.DEN/continue/prompts/fix-errors.md
-  - uses: file:///C:/Users/aidenleefaulconer/Downloads/vibe-coding/AI.DEN/continue/prompts/run-tests.md
-  - uses: file:///C:/Users/aidenleefaulconer/Downloads/vibe-coding/AI.DEN/continue/prompts/start-stack.md
-  - uses: file:///C:/Users/aidenleefaulconer/Downloads/vibe-coding/AI.DEN/continue/prompts/claw-terminal.md
+  - uses: continue/prompts/fix-errors.md
+  - uses: continue/prompts/run-tests.md
+  - uses: continue/prompts/start-stack.md
+  - uses: continue/prompts/claw-terminal.md
 
 mcpServers:
   - name: AI.DEN Ollama MCP
