@@ -76,12 +76,17 @@ Draft and target should share a **compatible tokenizer** (same model family). Qw
 
 | Variable | Default | Notes |
 |----------|---------|--------|
-| `LLAMACPP_SPEC_DRAFT_N_MAX` | `3` (mtp) / `16` (draft) | Max draft tokens per step |
+| `LLAMACPP_SPEC_DRAFT_N_MAX` | `3` (mtp) / `16` (draft) | Max draft tokens per step; **keep 3 for Qwen3.6-27B MTP** |
+| `LLAMACPP_FIT_TARGET` | `512` (4GB) / `1536` (12GB) | VRAM margin for `--fit` (MiB) |
+| `LLAMACPP_CACHE_K/V` | `q8_0` | KV cache quant |
+| `LLAMACPP_TEMP/TOP_P/TOP_K` | see `.env` | Server-wide sampling defaults |
 | `LLAMACPP_DRAFT_NGL` | `-1` | GPU layers for draft model |
 | `LLAMACPP_NGRAM_SIZE_N` | `12` | ngram lookup length |
 | `LLAMACPP_NGRAM_SIZE_M` | `48` | ngram draft length |
 
 Higher `SPEC_DRAFT_N_MAX` → more speed when acceptance is high, more waste when low.
+
+**Hardware profiles:** [hardware-tuning.md](hardware-tuning.md)
 
 ## Router / Cursor
 

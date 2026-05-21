@@ -1,4 +1,4 @@
-# AI.DEN → VS Code Continue (generated template — run scripts/sync-continue-config.ps1)
+# AI.DEN → VS Code Continue — sync via scripts/sync-continue-config.ps1
 name: AI.DEN Local
 version: 1.0.0
 schema: v1
@@ -18,10 +18,18 @@ models:
       - summarize
     defaultCompletionOptions:
       temperature: 0.15
-      maxTokens: 4096
+      maxTokens: 1536
       contextLength: 16384
     requestOptions:
       timeout: 300000
+    chatOptions:
+      baseAgentSystemMessage: |
+        You are a coding agent on AI.DEN (local Qwen + MCP). Workflow:
+        1. For errors: ask user to attach @problems (VS Code diagnostics) or read @terminal output.
+        2. Use MCP tools: read_file, edit_file, grep_search, symbol_search, library_docs.
+        3. After edits: MCP run_tests or project_tasks then run_command; stack checks via docker compose.
+        4. Host-only scripts (start-aiden.bat, npm run dev): tell user to run in VS Code terminal or use @terminal.
+        Never invent tool names. Use native tool_calls only.
 
   - name: AI.DEN General (8766)
     provider: openai
@@ -35,11 +43,11 @@ models:
       - edit
     defaultCompletionOptions:
       temperature: 0.2
-      maxTokens: 4096
+      maxTokens: 1536
+      contextLength: 16384
     requestOptions:
       timeout: 300000
 
-  # 27B autocomplete is slow — enable only if you accept latency
   - name: AI.DEN Autocomplete (optional)
     provider: openai
     model: Qwen3.6-27B-MTP-UD-Q4_K_XL.gguf
@@ -55,15 +63,36 @@ models:
 
 rules:
   - uses: file:///C:/Users/aidenleefaulconer/Downloads/vibe-coding/AI.DEN/continue/rules.md
+  - uses: file:///C:/Users/aidenleefaulconer/Downloads/vibe-coding/AI.DEN/continue/agent-workflow.md
 
+# @-mention context (type @ in Continue chat/agent)
 context:
+  - provider: problems
+  - provider: terminal
+  - provider: currentFile
   - provider: code
   - provider: diff
   - provider: file
-  - provider: terminal
+  - provider: open
+    params:
+      onlyPinned: false
+  - provider: repo-map
+    params:
+      includeSignatures: true
+  - provider: os
+  - provider: tree
+
+prompts:
+  - uses: file:///C:/Users/aidenleefaulconer/Downloads/vibe-coding/AI.DEN/continue/prompts/fix-errors.md
+  - uses: file:///C:/Users/aidenleefaulconer/Downloads/vibe-coding/AI.DEN/continue/prompts/run-tests.md
+  - uses: file:///C:/Users/aidenleefaulconer/Downloads/vibe-coding/AI.DEN/continue/prompts/start-stack.md
 
 mcpServers:
   - name: AI.DEN Ollama MCP
     type: streamable-http
     url: http://localhost:5000/mcp
-    connectionTimeout: 10000
+    connectionTimeout: 20000
+
+# Agent mode (not plain Chat) required for MCP tools to run automatically.
+# MCP: project_tasks, run_tests, run_command, library_docs, symbol_search, …
+# See docs/continue-vscode.md

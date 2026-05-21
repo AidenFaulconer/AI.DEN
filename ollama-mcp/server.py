@@ -32,6 +32,9 @@ CHAT_EXCLUDED_TOOLS = frozenset({"chat", "generate", "agent_chat"})
 ALLOWED_TOOL_NAMES = frozenset({
     "read_file", "write_file", "edit_file",
     "list_dir", "grep_search", "glob_files", "run_command",
+    "web_search", "fetch_url", "library_docs", "context7_docs", "project_dependencies",
+    "project_tasks", "run_tests",
+    "symbol_search",
     "list_models", "list_running_models", "show_model",
     "embed", "pull_model", "delete_model", "copy_model", "ollama_version",
 })
@@ -58,6 +61,17 @@ TOOL_ALIASES: dict[str, str] = {
     "terminal": "run_command",
     "run_terminal_cmd": "run_command",
     "execute": "run_command",
+    "search_web": "web_search",
+    "internet_search": "web_search",
+    "fetch": "fetch_url",
+    "read_url": "fetch_url",
+    "library_docs": "library_docs",
+    "resolve_library": "library_docs",
+    "query_docs": "library_docs",
+    "context7_docs": "library_docs",
+    "find_symbol": "symbol_search",
+    "go_to_definition": "symbol_search",
+    "document_symbols": "symbol_search",
 }
 
 
@@ -195,6 +209,88 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                 "timeout_sec": {"type": "integer", "description": "Timeout seconds (default 120, max 600)"},
             },
             ["command"],
+        ),
+        _tool_schema(
+            "web_search",
+            "Search the web for errors, deprecations, API changes. Use before guessing fixes.",
+            {
+                "query": {"type": "string", "description": "Search query e.g. 'Python 3.13 asyncio deprecation'"},
+                "max_results": {"type": "integer", "description": "Max snippets (default 5)"},
+            },
+            ["query"],
+        ),
+        _tool_schema(
+            "fetch_url",
+            "Fetch and read a documentation or changelog URL as plain text.",
+            {
+                "url": {"type": "string", "description": "https://... URL"},
+                "max_chars": {"type": "integer", "description": "Max characters to return"},
+            },
+            ["url"],
+        ),
+        _tool_schema(
+            "library_docs",
+            "Free library docs: PyPI/npm/crates.io/pkg.go.dev readme + official URLs + web fallback. No API key.",
+            {
+                "query": {"type": "string", "description": "Question e.g. 'useEffect cleanup deprecation'"},
+                "library": {"type": "string", "description": "Package name e.g. react, fastapi, serde"},
+                "ecosystem": {
+                    "type": "string",
+                    "description": "auto | python | npm | rust | go",
+                },
+                "version": {"type": "string", "description": "Optional pin e.g. 2.0.0"},
+            },
+            ["query"],
+        ),
+        _tool_schema(
+            "project_dependencies",
+            "List dependencies from requirements.txt, package.json, Cargo.toml for library_docs hints.",
+            {},
+        ),
+        _tool_schema(
+            "project_tasks",
+            "List suggested stack/test/lint/dev commands for this repo (read before run_tests).",
+            {},
+        ),
+        _tool_schema(
+            "run_tests",
+            "Run a test or verify command (default from project_tasks). Use after fixing @problems.",
+            {
+                "command": {
+                    "type": "string",
+                    "description": "Optional override e.g. docker compose config",
+                },
+                "cwd": {"type": "string", "description": "Working directory (default .)"},
+            },
+            [],
+        ),
+        _tool_schema(
+            "context7_docs",
+            "Alias for library_docs (free; Context7 not used).",
+            {
+                "query": {"type": "string"},
+                "library": {"type": "string"},
+                "library_id": {"type": "string"},
+            },
+            ["query"],
+        ),
+        _tool_schema(
+            "symbol_search",
+            "Find function/class/type definitions in project source (semantic-ish, not full LSP).",
+            {
+                "query": {"type": "string", "description": "Symbol name or regex"},
+                "path": {"type": "string", "description": "Subdirectory to search (default .)"},
+                "language": {
+                    "type": "string",
+                    "description": "python | typescript | javascript | rust | go | all",
+                },
+                "include_vendor": {
+                    "type": "boolean",
+                    "description": "Search node_modules/site-packages (slow)",
+                },
+                "max_results": {"type": "integer", "description": "Max hits (default 60)"},
+            },
+            ["query"],
         ),
         _tool_schema(
             "generate",
@@ -589,7 +685,7 @@ async def _summarize_transcript(
     )
     _apply_chat_defaults(payload)
     if OLLAMA_API_STYLE == "openai":
-        payload["max_tokens"] = min(900, _env_int("OLLAMA_MCP_MAX_TOKENS", 2048))
+        payload["max_tokens"] = min(768, _env_int("OLLAMA_MCP_MAX_TOKENS", 1536))
     _, content, _ = await _chat_completion(payload)
     return content.strip() or "Prior work occurred; details omitted for context limit."
 
@@ -760,11 +856,15 @@ def _apply_chat_defaults(payload: dict[str, Any]) -> dict[str, Any]:
     if OLLAMA_API_STYLE == "openai":
         payload.setdefault("temperature", _env_float("OLLAMA_MCP_TEMPERATURE", 0.15))
         payload.setdefault("top_p", _env_float("OLLAMA_MCP_TOP_P", 0.9))
-        payload.setdefault("max_tokens", _env_int("OLLAMA_MCP_MAX_TOKENS", 2048))
+        payload.setdefault("top_k", _env_int("OLLAMA_MCP_TOP_K", 20))
+        payload.setdefault("min_p", _env_float("OLLAMA_MCP_MIN_P", 0.0))
+        payload.setdefault("repeat_penalty", _env_float("OLLAMA_MCP_REPEAT_PENALTY", 1.0))
+        payload.setdefault("max_tokens", _env_int("OLLAMA_MCP_MAX_TOKENS", 1536))
     else:
         opts = dict(payload.get("options") or {})
         opts.setdefault("temperature", _env_float("OLLAMA_MCP_TEMPERATURE", 0.15))
         opts.setdefault("top_p", _env_float("OLLAMA_MCP_TOP_P", 0.9))
+        opts.setdefault("top_k", _env_int("OLLAMA_MCP_TOP_K", 20))
         payload["options"] = opts
     return payload
 
@@ -928,6 +1028,71 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> str:
                 str(args.get("command", "")),
                 str(args.get("cwd", ".")),
                 int(args.get("timeout_sec") or _CMD_TIMEOUT_DEFAULT),
+            )
+        if name == "web_search":
+            from research_tools import web_search_impl
+
+            return await web_search_impl(
+                str(args.get("query", "")),
+                int(args.get("max_results") or 5),
+            )
+        if name == "fetch_url":
+            from research_tools import fetch_url_impl
+
+            return await fetch_url_impl(
+                str(args.get("url", "")),
+                int(args.get("max_chars") or 0),
+            )
+        if name == "library_docs":
+            from library_docs import library_docs_impl
+
+            return await library_docs_impl(
+                WORKSPACE_ROOT,
+                str(args.get("query", "")),
+                str(args.get("library", "")),
+                str(args.get("ecosystem", "auto")),
+                str(args.get("version", "")),
+            )
+        if name == "project_dependencies":
+            from library_docs import project_dependencies_impl
+
+            return project_dependencies_impl(WORKSPACE_ROOT)
+        if name == "project_tasks":
+            from project_tasks import project_tasks_impl
+
+            return project_tasks_impl(WORKSPACE_ROOT)
+        if name == "run_tests":
+            from project_tasks import default_test_command, project_tasks_impl
+
+            cmd = str(args.get("command", "")).strip()
+            if not cmd:
+                cmd = default_test_command(WORKSPACE_ROOT) or ""
+            if not cmd:
+                return project_tasks_impl(WORKSPACE_ROOT) + "\n\nError: no test command; pass command="
+            return await _run_command_impl(
+                cmd,
+                str(args.get("cwd", ".")),
+                int(args.get("timeout_sec") or _CMD_TIMEOUT_DEFAULT),
+            )
+        if name == "context7_docs":
+            from research_tools import context7_docs_impl
+
+            return await context7_docs_impl(
+                str(args.get("query", "")),
+                str(args.get("library", "")),
+                str(args.get("library_id", "")),
+                workspace=WORKSPACE_ROOT,
+            )
+        if name == "symbol_search":
+            from research_tools import symbol_search_impl
+
+            return symbol_search_impl(
+                WORKSPACE_ROOT,
+                str(args.get("query", "")),
+                str(args.get("path", ".")),
+                str(args.get("language", "")),
+                bool(args.get("include_vendor", False)),
+                int(args.get("max_results") or 60),
             )
         if name == "ollama_version":
             return await ollama_version()
@@ -1666,6 +1831,121 @@ async def run_command(
         return await _run_command_impl(command, cwd, tout)
     except Exception as e:
         return f"Error: {e}"
+
+
+@mcp.tool()
+async def web_search(query: str, max_results: int = 0) -> str:
+    """Search the web for compile errors, deprecations, and API docs."""
+    try:
+        from research_tools import web_search_impl
+
+        return await web_search_impl(query, max_results or 5)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+async def fetch_url(url: str, max_chars: int = 0) -> str:
+    """Fetch a URL and return readable text."""
+    try:
+        from research_tools import fetch_url_impl
+
+        return await fetch_url_impl(url, max_chars)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+async def library_docs(
+    query: str,
+    library: str = "",
+    ecosystem: str = "auto",
+    version: str = "",
+) -> str:
+    """Free library documentation (PyPI, npm, crates.io, pkg.go.dev, cached)."""
+    try:
+        from library_docs import library_docs_impl
+
+        return await library_docs_impl(WORKSPACE_ROOT, query, library, ecosystem, version)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+async def project_dependencies() -> str:
+    """List packages from project manifest files."""
+    try:
+        from library_docs import project_dependencies_impl
+
+        return project_dependencies_impl(WORKSPACE_ROOT)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+async def project_tasks() -> str:
+    """List suggested build, test, stack, and dev commands for this workspace."""
+    try:
+        from project_tasks import project_tasks_impl
+
+        return project_tasks_impl(WORKSPACE_ROOT)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+async def run_tests(command: str = "", cwd: str = ".", timeout_sec: int = 0) -> str:
+    """Run tests or verification (docker compose config, pytest, npm test, etc.)."""
+    try:
+        from project_tasks import default_test_command, project_tasks_impl
+
+        cmd = command.strip() or (default_test_command(WORKSPACE_ROOT) or "")
+        if not cmd:
+            return project_tasks_impl(WORKSPACE_ROOT) + "\n\nError: specify command= or add tests to the repo."
+        tout = timeout_sec or _CMD_TIMEOUT_DEFAULT
+        return await _run_command_impl(cmd, cwd, tout)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+async def context7_docs(
+    query: str,
+    library: str = "",
+    library_id: str = "",
+) -> str:
+    """Alias for library_docs (free; no Context7 subscription)."""
+    try:
+        from research_tools import context7_docs_impl
+
+        return await context7_docs_impl(query, library, library_id, workspace=WORKSPACE_ROOT)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+async def symbol_search(
+    query: str,
+    path: str = ".",
+    language: str = "",
+    include_vendor: bool = False,
+    max_results: int = 0,
+) -> str:
+    """Find symbol definitions in workspace source."""
+    try:
+        from research_tools import symbol_search_impl
+
+        return symbol_search_impl(
+            WORKSPACE_ROOT,
+            query,
+            path,
+            language,
+            include_vendor,
+            max_results or 60,
+        )
+    except Exception as e:
+        return f"Error: {e}"
+
 
 # 
 

@@ -21,6 +21,7 @@ open-webui_data/
 
 # ── Agent / IDE session noise ────────────────────────────────────
 .claw/
+.aiden/
 .cursor/projects/
 agent-transcripts/
 terminals/

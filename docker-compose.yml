@@ -68,6 +68,13 @@ services:
       - LLAMACPP_SPEC_DRAFT_CTX_SIZE=${LLAMACPP_SPEC_DRAFT_CTX_SIZE:-}
       - LLAMACPP_NGRAM_SIZE_N=${LLAMACPP_NGRAM_SIZE_N:-12}
       - LLAMACPP_NGRAM_SIZE_M=${LLAMACPP_NGRAM_SIZE_M:-48}
+      - LLAMACPP_FIT=${LLAMACPP_FIT:-on}
+      - LLAMACPP_FIT_TARGET=${LLAMACPP_FIT_TARGET:-}
+      - LLAMACPP_TEMP=${LLAMACPP_TEMP:-0.45}
+      - LLAMACPP_TOP_P=${LLAMACPP_TOP_P:-0.95}
+      - LLAMACPP_TOP_K=${LLAMACPP_TOP_K:-20}
+      - LLAMACPP_MIN_P=${LLAMACPP_MIN_P:-0.0}
+      - LLAMACPP_REPEAT_PENALTY=${LLAMACPP_REPEAT_PENALTY:-1.0}
     deploy:
       resources:
         reservations:
@@ -192,6 +199,21 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # ── ctags indexer — universal-ctags tags for symbol_search (readtags) ────────
+  ctags-indexer:
+    build:
+      context: .
+      dockerfile: docker/ctags/Dockerfile
+    container_name: ctags-indexer
+    restart: unless-stopped
+    volumes:
+      - .:/workspace:rw
+    environment:
+      - CTAGS_WORKSPACE=/workspace
+      - CTAGS_OUTPUT=${CTAGS_OUTPUT:-.aiden/tags}
+      - CTAGS_INTERVAL_SEC=${CTAGS_INTERVAL_SEC:-300}
+    working_dir: /workspace
+
   # ── MCP Server (ollama-mcp) — use CODER port for pipeline-aware chat ────────
   mcp-server:
     build: ./ollama-mcp
@@ -200,6 +222,8 @@ services:
       - "${MCP_PORT:-5000}:5000"
     volumes:
       - .:/workspace:rw
+      # run_tests / run_command can call docker compose (Docker Desktop on Windows)
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - OLLAMA_BASE_URL=http://model-router:${CODER_PORT:-8765}
       - OLLAMA_API_STYLE=openai
@@ -218,7 +242,10 @@ services:
       - OLLAMA_MCP_CTX_RESERVE=${AIDEN_CTX_RESERVE:-3072}
       - OLLAMA_MCP_TOOL_RESULT_MAX=${OLLAMA_MCP_TOOL_RESULT_MAX:-4000}
       - OLLAMA_MCP_PRESERVE_RECENT=${OLLAMA_MCP_PRESERVE_RECENT:-6}
+      - CTAGS_TAGS_FILE=${CTAGS_TAGS_FILE:-/workspace/.aiden/tags}
     depends_on:
+      ctags-indexer:
+        condition: service_started
       model-router:
         condition: service_healthy
       llamacpp:

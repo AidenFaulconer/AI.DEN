@@ -6,11 +6,19 @@ WORKDIR /app
 # Copy the project files
 COPY pyproject.toml ./
 COPY server.py ./
+COPY research_tools.py ./
+COPY library_docs.py ./
+COPY project_tasks.py ./
 # If you have other files (e.g., requirements.txt, src/), copy them too
 
-# Install dependencies inside the container (no SSL issues here because we use Debian's CA certs)
+# readtags + optional docker CLI (compose tests via mounted docker.sock)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    universal-ctags \
+    docker.io \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir mcp ollama
+    pip install --no-cache-dir mcp ollama httpx
 
 # Expose the SSE port (default for MCP SSE transport is 5000)
 EXPOSE 5000

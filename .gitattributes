@@ -3,6 +3,7 @@
 *.sh text eol=lf
 *.bat text eol=crlf
 scripts/llamacpp-entrypoint.sh text eol=lf
+scripts/ctags-index.sh text eol=lf
 
 # Docker / nginx
 Dockerfile text eol=lf

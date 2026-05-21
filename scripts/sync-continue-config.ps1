@@ -1,4 +1,4 @@
-# Sync AI.DEN .env → ~/.continue/config.yaml for VS Code Continue
+# Sync AI.DEN .env + repo paths -> ~/.continue/config.yaml for VS Code Continue
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $envFile = Join-Path $repoRoot ".env"
@@ -20,35 +20,49 @@ function Get-EnvValue([string]$key, [string]$default = "") {
     return $default
 }
 
+function To-FileUri([string]$path) {
+    $p = ($path -replace '\\', '/') -replace ' ', '%20'
+    return "file:///$p"
+}
+
 $coderModel = Get-EnvValue "CODER_MODEL" "Qwen3.6-27B-MTP-UD-Q4_K_XL.gguf"
 $llamaModel = Get-EnvValue "LLAMA_MODEL" $coderModel
 $coderPort = Get-EnvValue "CODER_PORT" "8765"
 $llamaPort = Get-EnvValue "LLAMA_PORT" "8766"
 $mcpPort = Get-EnvValue "MCP_PORT" "5000"
-$rulesPath = (Join-Path $repoRoot "continue\rules.md") -replace '\\', '/'
+$ctxSize = Get-EnvValue "LLAMACPP_CTX_SIZE" "16384"
+$maxTokens = Get-EnvValue "OLLAMA_MCP_MAX_TOKENS" "1536"
 
-$yaml = Get-Content $template -Raw
-$yaml = $yaml -replace 'Qwen3\.6-27B-MTP-UD-Q4_K_XL\.gguf', [regex]::Escape($coderModel)
-$yaml = $yaml -replace 'http://localhost:8765/v1', "http://localhost:${coderPort}/v1"
-$yaml = $yaml -replace 'http://localhost:8766/v1', "http://localhost:${llamaPort}/v1"
-$yaml = $yaml -replace 'http://localhost:5000/mcp', "http://localhost:${mcpPort}/mcp"
-$yaml = $yaml -replace 'file:///C:/Users/aidenleefaulconer/Downloads/vibe-coding/AI.DEN/continue/rules.md', "file:///$($rulesPath -replace ' ', '%20')"
+$rulesUri = To-FileUri (Join-Path $repoRoot "continue\rules.md")
+$agentUri = To-FileUri (Join-Path $repoRoot "continue\agent-workflow.md")
+$promptFix = To-FileUri (Join-Path $repoRoot "continue\prompts\fix-errors.md")
+$promptTest = To-FileUri (Join-Path $repoRoot "continue\prompts\run-tests.md")
+$promptStack = To-FileUri (Join-Path $repoRoot "continue\prompts\start-stack.md")
 
 if (-not (Test-Path $continueDir)) {
     New-Item -ItemType Directory -Path $continueDir | Out-Null
 }
-Copy-Item -Path $template -Destination $dest -Force
-# Apply substitutions on dest (template copy then patch)
-$content = Get-Content $dest -Raw
+
+$content = Get-Content $template -Raw
 $content = $content -replace 'model: Qwen3\.6-27B-MTP-UD-Q4_K_XL\.gguf', "model: $coderModel"
 $content = $content -replace '(apiBase: http://localhost:)8765(/v1)', "`${1}${coderPort}`${2}"
-$content = $content -replace '(name: AI\.DEN General.*\r?\n(?:.*\r?\n)*?    model: )Qwen3\.6-27B-MTP-UD-Q4_K_XL\.gguf', "`${1}$llamaModel"
+$content = $content -replace '(name: AI\.DEN General[^\r\n]*\r?\n(?:[^\r\n]*\r?\n)*?    model: )Qwen3\.6-27B-MTP-UD-Q4_K_XL\.gguf', "`${1}$llamaModel"
 $content = $content -replace '(apiBase: http://localhost:)8766(/v1)', "`${1}${llamaPort}`${2}"
 $content = $content -replace 'http://localhost:5000/mcp', "http://localhost:${mcpPort}/mcp"
-$content = $content -replace 'file:///C:/Users/aidenleefaulconer/Downloads/vibe-coding/AI.DEN/continue/rules.md', "file:///$($rulesPath -replace ' ', '%20')"
+$content = $content -replace 'contextLength: \d+', "contextLength: $ctxSize"
+$content = $content -replace 'maxTokens: \d+', "maxTokens: $maxTokens"
+
+# Rewrite all file:// rules/prompts to this machine's repo path
+$content = $content -replace 'file:///[^`\r\n]+/continue/rules\.md', $rulesUri
+$content = $content -replace 'file:///[^`\r\n]+/continue/agent-workflow\.md', $agentUri
+$content = $content -replace 'file:///[^`\r\n]+/continue/prompts/fix-errors\.md', $promptFix
+$content = $content -replace 'file:///[^`\r\n]+/continue/prompts/run-tests\.md', $promptTest
+$content = $content -replace 'file:///[^`\r\n]+/continue/prompts/start-stack\.md', $promptStack
+
 Set-Content -Path $dest -Value $content -Encoding UTF8
 
 Write-Host "Wrote Continue config: $dest"
-Write-Host "  Coder: http://localhost:${coderPort}/v1  model=$coderModel"
+Write-Host "  Coder: http://localhost:${coderPort}/v1  model=$coderModel  ctx=$ctxSize"
 Write-Host "  MCP:   http://localhost:${mcpPort}/mcp"
-Write-Host "Reload Continue in VS Code (or restart window) after stack is up."
+Write-Host '  Use Agent mode + @problems @terminal - see docs/continue-vscode.md'
+Write-Host "Reload Continue in VS Code after stack is up."

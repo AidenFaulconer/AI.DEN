@@ -9,18 +9,31 @@ if [ -z "$LLAMACPP_GGUF" ] || [ ! -f "$MODEL" ]; then
 fi
 
 SPEC_MODE="${LLAMACPP_SPEC_MODE:-mtp}"
-SPEC_N_MAX="${LLAMACPP_SPEC_DRAFT_N_MAX:-16}"
+SPEC_N_MAX="${LLAMACPP_SPEC_DRAFT_N_MAX:-3}"
 CTX="${LLAMACPP_CTX_SIZE:-16384}"
 THREADS="${LLAMACPP_THREADS:-8}"
 NGL="${LLAMACPP_NGL:--1}"
 NGL_DRAFT="${LLAMACPP_DRAFT_NGL:--1}"
+FIT="${LLAMACPP_FIT:-on}"
+FIT_TARGET="${LLAMACPP_FIT_TARGET:-}"
+TEMP="${LLAMACPP_TEMP:-0.45}"
+TOP_P="${LLAMACPP_TOP_P:-0.95}"
+TOP_K="${LLAMACPP_TOP_K:-20}"
+MIN_P="${LLAMACPP_MIN_P:-0.0}"
+REPEAT="${LLAMACPP_REPEAT_PENALTY:-1.0}"
 
-ARGS="-m $MODEL --host 0.0.0.0 --port 8080 --fit on -ngl $NGL --flash-attn on --jinja --ctx-size $CTX -t $THREADS -np 1"
+ARGS="-m $MODEL --host 0.0.0.0 --port 8080 -ngl $NGL --flash-attn on --jinja --ctx-size $CTX -t $THREADS -np 1"
+if [ -n "$FIT_TARGET" ]; then
+  ARGS="$ARGS --fit on --fit-target $FIT_TARGET"
+elif [ "$FIT" != "off" ] && [ "$FIT" != "0" ] && [ "$FIT" != "false" ]; then
+  ARGS="$ARGS --fit $FIT"
+fi
 ARGS="$ARGS --cache-type-k ${LLAMACPP_CACHE_K:-q8_0} --cache-type-v ${LLAMACPP_CACHE_V:-q8_0}"
+ARGS="$ARGS --temp $TEMP --top-p $TOP_P --top-k $TOP_K --min-p $MIN_P --repeat-penalty $REPEAT"
 
 case "$SPEC_MODE" in
   mtp)
-    ARGS="$ARGS --spec-type draft-mtp --spec-draft-n-max ${LLAMACPP_SPEC_DRAFT_N_MAX:-3}"
+    ARGS="$ARGS --spec-type draft-mtp --spec-draft-n-max $SPEC_N_MAX"
     ;;
   draft|draft-model)
     if [ -z "${LLAMACPP_DRAFT_GGUF:-}" ]; then

@@ -26,7 +26,14 @@ x-unsloth-mem: &unsloth_mem
   mem_limit: ${AIDEN_UNSLOTH_MEM_LIMIT:-8g}
   memswap_limit: ${AIDEN_UNSLOTH_MEMSWAP_LIMIT:-8g}
 
+x-ctags-mem: &ctags_mem
+  mem_limit: ${AIDEN_CTAGS_MEM_LIMIT:-512m}
+  memswap_limit: ${AIDEN_CTAGS_MEMSWAP_LIMIT:-512m}
+
 services:
+  ctags-indexer:
+    <<: *ctags_mem
+
   model-router:
     <<: *router_mem
 

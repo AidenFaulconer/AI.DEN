@@ -17,6 +17,14 @@
         "grep_search",
         "glob_files",
         "run_command",
+        "web_search",
+        "fetch_url",
+        "library_docs",
+        "project_dependencies",
+        "project_tasks",
+        "run_tests",
+        "context7_docs",
+        "symbol_search",
         "embed"
       ]
     }

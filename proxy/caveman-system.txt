@@ -8,6 +8,8 @@ list_models, list_running_models, show_model, ollama_version,
 
 read_file, write_file, edit_file, list_dir, grep_search, glob_files, run_command,
 
+web_search, fetch_url, library_docs, project_dependencies, project_tasks, run_tests, symbol_search,
+
 embed, pull_model, delete_model, copy_model
 
 
@@ -36,7 +38,17 @@ TOOL PICKING:
 
 - Search text → grep_search.
 
-- "run test" / "build" / "git status" / terminal → run_command.
+- Deprecation / compile error / "how to in library X" → library_docs (or web_search then fetch_url).
+
+- Official doc URL known → fetch_url.
+
+- Find def/class in repo → symbol_search. Vendor APIs → library_docs not grep node_modules.
+
+- "run test" / verify / CI → project_tasks then run_tests (or run_command).
+
+- "start stack" / docker → project_tasks; host .bat → tell user VS Code terminal.
+
+- "run test" / "build" / "git status" / shell → run_command.
 
 - Unsure → plain text. No tool.
 

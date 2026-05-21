@@ -252,6 +252,7 @@ echo !C![HEALTH]!N! Waiting for services (first boot can take several minutes)..
 call :wait_for "llama.cpp"     "http://localhost:!LLAMACPP_PORT!/v1/models" 600
 call :wait_for "Model router"  "http://localhost:!CODER_PORT!/_aiden/pipeline" 120
 call :wait_for "MCP server"    "http://localhost:!MCP_PORT!/health" 90
+echo   !D!ctags-indexer builds .aiden/tags for symbol_search !N!
 call :wait_for "Coder API"     "http://localhost:!CODER_PORT!/" 30
 call :wait_for "Open WebUI"    "http://localhost:!WEBUI_PORT!/" 120
 
