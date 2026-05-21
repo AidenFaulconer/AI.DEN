@@ -25,12 +25,20 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
+from workspace_roots import (
+    MOUNT_CONTAINER,
+    MOUNT_HOST,
+    active_workspace_root,
+    static_workspace_root,
+    workspace_info_lines,
+    workspace_scope,
+)
 
 # Tools the model may call via OpenAI tool_calls (exclude meta / recursion)
 CHAT_EXCLUDED_TOOLS = frozenset({"chat", "generate", "agent_chat"})
 ALLOWED_TOOL_NAMES = frozenset({
-    "read_file", "write_file", "edit_file",
+    "read_file", "write_file", "edit_file", "workspace_info",
     "list_dir", "grep_search", "glob_files", "run_command",
     "web_search", "fetch_url", "library_docs", "context7_docs", "project_dependencies",
     "project_tasks", "run_tests",
@@ -150,8 +158,13 @@ def get_tool_definitions() -> list[dict[str, Any]]:
         ),
         _tool_schema(
             "read_file",
-            "Read a workspace file. Not for listing models.",
-            {"path": {"type": "string", "description": "Absolute or relative file path"}},
+            "Read a file under MCP workspace_root (paths relative to the VS Code project folder, not AI.DEN unless mounted).",
+            {"path": {"type": "string", "description": "Relative path e.g. frontend/src/App.jsx"}},
+        ),
+        _tool_schema(
+            "workspace_info",
+            "Show MCP workspace root and top-level files — call first if read_file paths fail.",
+            {},
         ),
         _tool_schema(
             "write_file",
@@ -353,6 +366,9 @@ _log_fmt = "%(levelname)s %(name)s %(message)s"
 _stderr = __import__("sys").stderr
 logging.basicConfig(level=_log_level(), format=_log_fmt, stream=_stderr)
 logger = logging.getLogger("ollama-mcp")
+# Docker healthchecks hit /health every minute — keep access logs quiet
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.error").setLevel(logging.INFO)
 
 OLLAMA_BASE = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_API_STYLE = os.environ.get("OLLAMA_API_STYLE", "ollama").lower()
@@ -398,13 +414,47 @@ async def _get_client() -> httpx.AsyncClient:
 
 mcp = FastMCP("ollama", host=_MCP_HOST, port=_MCP_PORT)
 
+# Bind workspace from client MCP roots on every tool call (no manual path script)
+_tm_call_tool = mcp._tool_manager.call_tool
+
+
+async def _call_tool_with_workspace(
+    name: str,
+    arguments: dict[str, Any],
+    context: Context | None = None,
+    convert_result: bool = False,
+):
+    async with workspace_scope(context):
+        return await _tm_call_tool(name, arguments, context=context, convert_result=convert_result)
+
+
+mcp._tool_manager.call_tool = _call_tool_with_workspace  # type: ignore[method-assign]
+
 
 @mcp.custom_route("/health", methods=["GET"])
 async def health_check(request):  # noqa: ARG001
     """Liveness probe for Docker and load balancers."""
     from starlette.responses import JSONResponse
 
-    return JSONResponse({"status": "ok"})
+    active = _ws()
+    sample: list[str] = []
+    try:
+        for entry in sorted(active.iterdir(), key=lambda e: e.name.lower())[:12]:
+            sample.append(entry.name + ("/" if entry.is_dir() else ""))
+    except OSError:
+        sample = []
+    return JSONResponse(
+        {
+            "status": "ok",
+            "workspace_root": str(active),
+            "mount_container": str(MOUNT_CONTAINER),
+            "mount_host": str(MOUNT_HOST),
+            "sample_entries": sample,
+            "hint": "read_file paths are relative to workspace_root. "
+            "Roots follow the VS Code/Continue workspace when the client supports MCP roots. "
+            "Docker mount (AIDEN_MCP_WORKSPACE_HOST) must include that folder (parent dir is fine).",
+        }
+    )
 
 
 def _api_url(path: str) -> str:
@@ -525,10 +575,13 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-# Workspace root: repo mount in Docker (/workspace) or AI.DEN parent when running via stdio on host
-_default_ws = Path(__file__).resolve().parent.parent
-WORKSPACE_ROOT = Path(os.environ.get("OLLAMA_MCP_WORKSPACE", str(_default_ws))).resolve()
+# Static mount fallback; per-request root comes from MCP client roots (VS Code / Continue workspace)
+WORKSPACE_ROOT = static_workspace_root()
 WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+def _ws() -> Path:
+    return active_workspace_root()
 
 _CMD_TIMEOUT_DEFAULT = max(5, _env_int("OLLAMA_MCP_CMD_TIMEOUT", 120))
 _CMD_TIMEOUT_MAX = 600
@@ -558,7 +611,10 @@ _CTX_RESERVE = _env_int("OLLAMA_MCP_CTX_RESERVE", _env_int("AIDEN_CTX_RESERVE", 
 _TOOL_RESULT_MAX = _env_int("OLLAMA_MCP_TOOL_RESULT_MAX", 4000)
 _COMPACT_THRESHOLD = _env_float("OLLAMA_MCP_COMPACT_THRESHOLD", 0.82)
 _PRESERVE_RECENT = max(2, _env_int("OLLAMA_MCP_PRESERVE_RECENT", 6))
-_SESSION_DIR = WORKSPACE_ROOT / ".aiden-agent-sessions"
+def _session_dir() -> Path:
+    d = _ws() / ".aiden-agent-sessions"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def _max_prompt_tokens() -> int:
@@ -765,8 +821,7 @@ async def _chat_completion_safe(
 
 def _session_path(session_id: str) -> Path:
     safe = re.sub(r"[^a-zA-Z0-9_-]+", "_", session_id.strip())[:64]
-    _SESSION_DIR.mkdir(parents=True, exist_ok=True)
-    return _SESSION_DIR / f"{safe}.json"
+    return _session_dir() / f"{safe}.json"
 
 
 def _load_session(session_id: str) -> list[dict[str, Any]] | None:
@@ -792,7 +847,8 @@ def _save_session(session_id: str, messages: list[dict[str, Any]], meta: dict[st
 
 
 def _resolve_workspace_path(path: str, *, must_exist: bool = False) -> Path:
-    """Resolve path inside WORKSPACE_ROOT; reject escapes."""
+    """Resolve path inside the active workspace root; reject escapes."""
+    root = _ws()
     raw = (path or ".").strip()
     if not raw:
         raw = "."
@@ -800,24 +856,51 @@ def _resolve_workspace_path(path: str, *, must_exist: bool = False) -> Path:
     # Windows path inside Linux container: use basename chain under workspace if clearly foreign
     if re.match(r"^[a-zA-Z]:[\\/]", raw):
         parts = [x for x in re.split(r"[\\/]+", raw) if x and x not in (".", "..")]
-        p = WORKSPACE_ROOT.joinpath(*parts) if parts else WORKSPACE_ROOT
+        p = root.joinpath(*parts) if parts else root
     elif not p.is_absolute():
-        p = WORKSPACE_ROOT / p
+        p = root / p
     else:
         p = p.resolve()
         try:
-            p.relative_to(WORKSPACE_ROOT)
+            p.relative_to(root)
         except ValueError:
             parts = [x for x in p.parts if x not in (".", "..")]
-            p = WORKSPACE_ROOT.joinpath(*parts) if parts else WORKSPACE_ROOT
+            p = root.joinpath(*parts) if parts else root
     p = p.resolve()
     try:
-        p.relative_to(WORKSPACE_ROOT)
+        p.relative_to(root)
     except ValueError as exc:
-        raise ValueError(f"Path outside workspace ({WORKSPACE_ROOT}): {path}") from exc
+        raise ValueError(f"Path outside workspace ({root}): {path}") from exc
     if must_exist and not p.exists():
-        raise FileNotFoundError(f"Not found: {p}")
+        raise FileNotFoundError(_path_not_found_message(path, p))
     return p
+
+
+def _path_not_found_message(requested: str, resolved: Path) -> str:
+    name = Path(requested).name
+    similar: list[str] = []
+    if name:
+        try:
+            for hit in _ws().rglob(name):
+                if hit.is_file():
+                    similar.append(hit.relative_to(_ws()).as_posix())
+                if len(similar) >= 8:
+                    break
+        except OSError:
+            pass
+    lines = [
+        f"Not found: {requested}",
+        f"Resolved to: {resolved}",
+        f"MCP workspace_root: {_ws()}",
+        "Open the project in VS Code/Continue (MCP roots) and ensure Docker mount includes it "
+        "(AIDEN_MCP_WORKSPACE_HOST parent folder, e.g. vibe-coding).",
+    ]
+    if similar:
+        lines.append("Similar filenames in workspace:")
+        lines.extend(f"  - {s}" for s in similar)
+    elif name:
+        lines.append(f"Try: glob_files pattern=\"**/{name}\"")
+    return "\n".join(lines)
 
 
 def _command_is_safe(command: str) -> str | None:
@@ -995,6 +1078,8 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> str:
     if name not in AGENT_EXECUTABLE_TOOLS:
         return f"Error: tool {name!r} not allowed in agent loop"
     try:
+        if name == "workspace_info":
+            return _workspace_info_impl()
         if name == "read_file":
             return await _read_file_impl(str(args.get("path", "")))
         if name == "write_file":
@@ -1047,7 +1132,7 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> str:
             from library_docs import library_docs_impl
 
             return await library_docs_impl(
-                WORKSPACE_ROOT,
+                _ws(),
                 str(args.get("query", "")),
                 str(args.get("library", "")),
                 str(args.get("ecosystem", "auto")),
@@ -1056,19 +1141,19 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> str:
         if name == "project_dependencies":
             from library_docs import project_dependencies_impl
 
-            return project_dependencies_impl(WORKSPACE_ROOT)
+            return project_dependencies_impl(_ws())
         if name == "project_tasks":
             from project_tasks import project_tasks_impl
 
-            return project_tasks_impl(WORKSPACE_ROOT)
+            return project_tasks_impl(_ws())
         if name == "run_tests":
             from project_tasks import default_test_command, project_tasks_impl
 
             cmd = str(args.get("command", "")).strip()
             if not cmd:
-                cmd = default_test_command(WORKSPACE_ROOT) or ""
+                cmd = default_test_command(_ws()) or ""
             if not cmd:
-                return project_tasks_impl(WORKSPACE_ROOT) + "\n\nError: no test command; pass command="
+                return project_tasks_impl(_ws()) + "\n\nError: no test command; pass command="
             return await _run_command_impl(
                 cmd,
                 str(args.get("cwd", ".")),
@@ -1081,13 +1166,13 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> str:
                 str(args.get("query", "")),
                 str(args.get("library", "")),
                 str(args.get("library_id", "")),
-                workspace=WORKSPACE_ROOT,
+                workspace=_ws(),
             )
         if name == "symbol_search":
             from research_tools import symbol_search_impl
 
             return symbol_search_impl(
-                WORKSPACE_ROOT,
+                _ws(),
                 str(args.get("query", "")),
                 str(args.get("path", ".")),
                 str(args.get("language", "")),
@@ -1598,8 +1683,15 @@ def main() -> None:
 #         return f"Error: {e}"
 
 
+def _workspace_info_impl() -> str:
+    return "\n".join(workspace_info_lines())
+
+
 async def _read_file_impl(path: str) -> str:
-    p = _resolve_workspace_path(path, must_exist=True)
+    try:
+        p = _resolve_workspace_path(path, must_exist=True)
+    except FileNotFoundError as e:
+        return f"Error: {e}"
     if p.is_dir():
         return f"Error: {p} is a directory, not a file"
     text = p.read_text(encoding="utf-8")
@@ -1632,7 +1724,7 @@ async def _list_dir_impl(path: str, recursive: bool = False) -> str:
     max_entries = 500
 
     def add_entry(entry: Path) -> None:
-        rel = entry.relative_to(WORKSPACE_ROOT)
+        rel = entry.relative_to(_ws())
         kind = "dir" if entry.is_dir() else "file"
         lines.append(f"{kind}\t{rel.as_posix()}")
 
@@ -1682,7 +1774,7 @@ async def _grep_search_impl(
                 return
             for i, line in enumerate(fp.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
                 if regex.search(line):
-                    rel = fp.relative_to(WORKSPACE_ROOT)
+                    rel = fp.relative_to(_ws())
                     matches.append(f"{rel.as_posix()}:{i}:{line[:200]}")
                     if len(matches) >= max_results:
                         return
@@ -1717,7 +1809,7 @@ async def _glob_files_impl(pattern: str, path: str = ".", max_results: int = 100
             found.append("... truncated")
             break
         if fp.is_file() or fp.is_dir():
-            found.append(fp.relative_to(WORKSPACE_ROOT).as_posix())
+            found.append(fp.relative_to(_ws()).as_posix())
     return "\n".join(found) if found else "No matches"
 
 
@@ -1771,12 +1863,16 @@ async def edit_file(path: str, old_string: str, new_string: str) -> str:
 
 
 @mcp.tool()
+async def workspace_info() -> str:
+    """Show which directory MCP tools can read (must match your VS Code project)."""
+    return _workspace_info_impl()
+
+
+@mcp.tool()
 async def read_file(path: str) -> str:
     """Read the full content of a file under the workspace."""
     try:
         return await _read_file_impl(path)
-    except FileNotFoundError as e:
-        return f"Error: {e}"
     except Exception as e:
         return f"Error reading file: {e}"
 
@@ -1866,7 +1962,7 @@ async def library_docs(
     try:
         from library_docs import library_docs_impl
 
-        return await library_docs_impl(WORKSPACE_ROOT, query, library, ecosystem, version)
+        return await library_docs_impl(_ws(), query, library, ecosystem, version)
     except Exception as e:
         return f"Error: {e}"
 
@@ -1877,7 +1973,7 @@ async def project_dependencies() -> str:
     try:
         from library_docs import project_dependencies_impl
 
-        return project_dependencies_impl(WORKSPACE_ROOT)
+        return project_dependencies_impl(_ws())
     except Exception as e:
         return f"Error: {e}"
 
@@ -1888,7 +1984,7 @@ async def project_tasks() -> str:
     try:
         from project_tasks import project_tasks_impl
 
-        return project_tasks_impl(WORKSPACE_ROOT)
+        return project_tasks_impl(_ws())
     except Exception as e:
         return f"Error: {e}"
 
@@ -1899,9 +1995,9 @@ async def run_tests(command: str = "", cwd: str = ".", timeout_sec: int = 0) -> 
     try:
         from project_tasks import default_test_command, project_tasks_impl
 
-        cmd = command.strip() or (default_test_command(WORKSPACE_ROOT) or "")
+        cmd = command.strip() or (default_test_command(_ws()) or "")
         if not cmd:
-            return project_tasks_impl(WORKSPACE_ROOT) + "\n\nError: specify command= or add tests to the repo."
+            return project_tasks_impl(_ws()) + "\n\nError: specify command= or add tests to the repo."
         tout = timeout_sec or _CMD_TIMEOUT_DEFAULT
         return await _run_command_impl(cmd, cwd, tout)
     except Exception as e:
@@ -1918,7 +2014,7 @@ async def context7_docs(
     try:
         from research_tools import context7_docs_impl
 
-        return await context7_docs_impl(query, library, library_id, workspace=WORKSPACE_ROOT)
+        return await context7_docs_impl(query, library, library_id, workspace=_ws())
     except Exception as e:
         return f"Error: {e}"
 
@@ -1936,7 +2032,7 @@ async def symbol_search(
         from research_tools import symbol_search_impl
 
         return symbol_search_impl(
-            WORKSPACE_ROOT,
+            _ws(),
             query,
             path,
             language,

@@ -32,6 +32,15 @@ $llamaPort = Get-EnvValue "LLAMA_PORT" "8766"
 $mcpPort = Get-EnvValue "MCP_PORT" "5000"
 $ctxSize = Get-EnvValue "LLAMACPP_CTX_SIZE" "16384"
 $maxTokens = Get-EnvValue "OLLAMA_MCP_MAX_TOKENS" "1536"
+$fitTarget = [int](Get-EnvValue "LLAMACPP_FIT_TARGET" "512")
+$repoSigs = Get-EnvValue "AIDEN_REPO_MAP_SIGNATURES" ""
+if ($repoSigs -eq "") {
+    $repoSigs = if ($fitTarget -gt 768) { "true" } else { "false" }
+}
+# 4GB profile: smaller Continue window unless .env overrides ctx
+if ($fitTarget -le 768 -and $ctxSize -gt 8192) {
+    $ctxSize = "8192"
+}
 
 $rulesUri = To-FileUri (Join-Path $repoRoot "continue\rules.md")
 $agentUri = To-FileUri (Join-Path $repoRoot "continue\agent-workflow.md")
@@ -51,6 +60,7 @@ $content = $content -replace '(apiBase: http://localhost:)8766(/v1)', "`${1}${ll
 $content = $content -replace 'http://localhost:5000/mcp', "http://localhost:${mcpPort}/mcp"
 $content = $content -replace 'contextLength: \d+', "contextLength: $ctxSize"
 $content = $content -replace 'maxTokens: \d+', "maxTokens: $maxTokens"
+$content = $content -replace 'includeSignatures: (true|false)', "includeSignatures: $repoSigs"
 
 # Rewrite all file:// rules/prompts to this machine's repo path
 $content = $content -replace 'file:///[^`\r\n]+/continue/rules\.md', $rulesUri
@@ -58,11 +68,23 @@ $content = $content -replace 'file:///[^`\r\n]+/continue/agent-workflow\.md', $a
 $content = $content -replace 'file:///[^`\r\n]+/continue/prompts/fix-errors\.md', $promptFix
 $content = $content -replace 'file:///[^`\r\n]+/continue/prompts/run-tests\.md', $promptTest
 $content = $content -replace 'file:///[^`\r\n]+/continue/prompts/start-stack\.md', $promptStack
+$promptClaw = To-FileUri (Join-Path $repoRoot "continue\prompts\claw-terminal.md")
+$content = $content -replace 'file:///[^`\r\n]+/continue/prompts/claw-terminal\.md', $promptClaw
 
 Set-Content -Path $dest -Value $content -Encoding UTF8
+
+# Workspace ignore file (node_modules, dist, …) — Continue + repo-map indexing
+$ignoreTemplate = Join-Path $repoRoot "continue\.continueignore"
+$ignoreDest = Join-Path $repoRoot ".continueignore"
+if ((Test-Path $ignoreTemplate) -and -not (Test-Path $ignoreDest)) {
+    Copy-Item $ignoreTemplate $ignoreDest
+    Write-Host "Created .continueignore at repo root (from continue/.continueignore)"
+}
 
 Write-Host "Wrote Continue config: $dest"
 Write-Host "  Coder: http://localhost:${coderPort}/v1  model=$coderModel  ctx=$ctxSize"
 Write-Host "  MCP:   http://localhost:${mcpPort}/mcp"
-Write-Host '  Use Agent mode + @problems @terminal - see docs/continue-vscode.md'
+Write-Host "  @repo-map includeSignatures=$repoSigs  (FIT_TARGET=$fitTarget)"
+Write-Host '  Use Agent mode + @problems @tree @repo-map (subfolder) - docs/continue-repo-context.md'
+Write-Host '  Claw terminal: launch-claw.bat  |  docs/claw-with-continue.md'
 Write-Host "Reload Continue in VS Code after stack is up."

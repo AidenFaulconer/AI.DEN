@@ -61,14 +61,20 @@ Coding agents should stay **low temperature**; raise `LLAMACPP_TEMP` only for op
 
 | Variable | Role |
 |----------|------|
-| `AIDEN_CTX_RESERVE` | Tokens left for model reply (4096) |
-| `AIDEN_MAX_MSG_CHARS` | Per-message cap before router trim |
+| `AIDEN_MAX_PROMPT_TOKENS` | Hard cap on prompt size (7680 on 4GB) — avoids 9k+ full reprocess |
+| `AIDEN_CTX_RESERVE` | Tokens left for model reply (5120) |
+| `AIDEN_MAX_MSG_CHARS` | Per-message cap before router trim (6000) |
 | `AIDEN_TOOL_RESULT_MAX_CHARS` | Old tool output compression |
-| `OLLAMA_MCP_COMPACT_THRESHOLD` | Summarize history earlier (0.78) |
-| `OLLAMA_MCP_PRESERVE_RECENT` | Turns kept verbatim (4) |
+| `LLAMACPP_UBATCH_SIZE` | Physical batch for prompt eval (256 on 4GB) |
+| `OLLAMA_MCP_COMPACT_THRESHOLD` | Summarize history earlier (0.72) |
+| `OLLAMA_MCP_PRESERVE_RECENT` | Turns kept verbatim (3) |
 | `OLLAMA_MCP_MAX_TOKENS` | Cap completion length per MCP step |
 
-Watch response headers: `X-AIDEN-Context-Truncated`, `X-AIDEN-Prompt-Tokens-Est`.
+Watch response headers: `X-AIDEN-Prompt-Tokens-Est` (every request), `X-AIDEN-Context-Truncated`.
+
+### Slow logs (`prompt eval` 180s+, `tg` ~1.1 t/s)
+
+Usually **~9500 prompt tokens** from Continue (`@repo-map`, long history). Router now trims harder; Continue config uses **8192** context and **repo-map off**. If llama.cpp logs `forcing full prompt re-processing`, the next turn did not match the cached 9k prompt — keep prompts under ~7k tokens.
 
 ## Vision
 

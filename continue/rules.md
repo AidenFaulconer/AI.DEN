@@ -9,12 +9,30 @@ You run against the local AI.DEN stack (model-router + llama.cpp), not cloud API
 - Model id must match `GET http://localhost:8765/v1/models` (GGUF filename when using llama.cpp).
 - Do not point Continue at bare `:8081` if you want the prompt pipeline.
 
+## Repo context (@tree / @repo-map)
+
+- **`@tree`** — folder structure (low token cost).
+- **`@repo-map`** — file list + signatures; on 4GB signatures are **off** after sync. In the `@` menu, pick a **subfolder**, not “Entire codebase”.
+- **`node_modules`** — excluded via `.continueignore` + `.gitignore` (not fully mapped).
+- Details: `docs/continue-repo-context.md`
+
+## Claw Code (optional, terminal)
+
+Continue does not embed Claw. Same AI stack: `launch-claw.bat` → `:8765`. Slash **`/Claw terminal`** or `docs/claw-with-continue.md`. Optional MCP: `continue/claw.settings.example.json` → `%USERPROFILE%\.claw\settings.json`.
+
+## MCP workspace (important)
+
+MCP follows the **VS Code / Continue workspace** via MCP `roots` (no script per project). Docker must mount a **parent folder** that contains your repo (default: `AIDEN_MCP_WORKSPACE_HOST=..` → all of `vibe-coding` at `/workspace`).
+
+If paths fail: call MCP `workspace_info`, or widen the mount in AI.DEN `.env` and recreate `mcp-server` + `ctags-indexer`.
+
 ## MCP tools (AI.DEN Ollama MCP on :5000)
 
 Use **only** these names via native tool_calls (never print XML in chat/thought text):
 
 | Task | MCP tool | Example args |
 |------|----------|----------------|
+| Wrong project / paths fail | `workspace_info` | (no args) — shows mounted root |
 | Find files | `glob_files` | `pattern: "**/config.yaml"` |
 | List directory | `list_dir` | `path: "continue"` or `path: "."` |
 | Read file | `read_file` | `path: "continue/config.yaml"` |

@@ -1,0 +1,13 @@
+{
+  "model": "openai/Qwen3.6-27B-MTP-UD-Q4_K_XL.gguf",
+  "env": {
+    "OPENAI_API_KEY": "ollama",
+    "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1"
+  },
+  "mcpServers": {
+    "aiden-ollama": {
+      "type": "http",
+      "url": "http://127.0.0.1:5000/mcp"
+    }
+  }
+}

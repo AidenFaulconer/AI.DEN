@@ -18,8 +18,8 @@ models:
       - summarize
     defaultCompletionOptions:
       temperature: 0.15
-      maxTokens: 1536
-      contextLength: 16384
+      maxTokens: 1024
+      contextLength: 8192
     requestOptions:
       timeout: 300000
     chatOptions:
@@ -43,8 +43,8 @@ models:
       - edit
     defaultCompletionOptions:
       temperature: 0.2
-      maxTokens: 1536
-      contextLength: 16384
+      maxTokens: 1024
+      contextLength: 8192
     requestOptions:
       timeout: 300000
 
@@ -76,9 +76,11 @@ context:
   - provider: open
     params:
       onlyPinned: false
+  # Structure: @tree (folders). Outline: @repo-map — pick a subfolder in @ menu, not whole monorepo on 4GB.
+  # Signatures toggled by sync script from LLAMACPP_FIT_TARGET (see docs/continue-repo-context.md).
   - provider: repo-map
     params:
-      includeSignatures: true
+      includeSignatures: false
   - provider: os
   - provider: tree
 
@@ -86,6 +88,7 @@ prompts:
   - uses: file:///C:/Users/aidenleefaulconer/Downloads/vibe-coding/AI.DEN/continue/prompts/fix-errors.md
   - uses: file:///C:/Users/aidenleefaulconer/Downloads/vibe-coding/AI.DEN/continue/prompts/run-tests.md
   - uses: file:///C:/Users/aidenleefaulconer/Downloads/vibe-coding/AI.DEN/continue/prompts/start-stack.md
+  - uses: file:///C:/Users/aidenleefaulconer/Downloads/vibe-coding/AI.DEN/continue/prompts/claw-terminal.md
 
 mcpServers:
   - name: AI.DEN Ollama MCP

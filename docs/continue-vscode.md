@@ -24,19 +24,55 @@ Configured in `continue/config.yaml` under `context:` (`problems`, `terminal`, �
 
 **Use Agent mode** (not Chat-only) so MCP tools execute. Model must have `tool_use` (configured).
 
+## MCP workspace must match your VS Code project
+
+By default Docker mounts the **AI.DEN** repo at `/workspace`. If you open **another project** in VS Code, `read_file` for `frontend/src/...` fails — that path is not in AI.DEN.
+
+**Fix** (run once per project, from your app repo root):
+
+```powershell
+C:\path\to\AI.DEN\scripts\use-mcp-workspace.ps1
+```
+
+Or set in AI.DEN `.env`:
+
+```env
+AIDEN_MCP_WORKSPACE_HOST=C:/path/to/your-frontend-app
+```
+
+Then:
+
+```powershell
+cd C:\path\to\AI.DEN
+docker compose up -d --force-recreate mcp-server ctags-indexer
+```
+
+Verify: `http://localhost:5000/health` → `workspace_root` and `sample_entries` should match your app (e.g. `frontend/`, `package.json`).
+
+MCP tools: `workspace_info`, `glob_files` with `**/contact.jsx`.
+
 ## Setup checklist
 
 1. Stack up: `start-aiden.bat`
-2. Sync config: `.\scripts\sync-continue-config.ps1`
-3. VS Code: reload Continue, select **AI.DEN Coder**, open **Agent** panel
-4. Enable MCP server **AI.DEN Ollama MCP** in Continue settings
-5. Rebuild MCP after updates: `docker compose up -d --build mcp-server`
+2. Point MCP at your project: `use-mcp-workspace.ps1` (if not editing AI.DEN itself)
+3. Sync config: `.\scripts\sync-continue-config.ps1`
+4. VS Code: reload Continue, select **AI.DEN Coder**, open **Agent** panel
+5. Enable MCP server **AI.DEN Ollama MCP** in Continue settings
+6. Rebuild MCP after updates: `docker compose up -d --build mcp-server`
 
 ## Slash prompts
 
 - `/Fix errors` — @problems workflow + run_tests
 - `/Run tests` — project_tasks + run_tests
 - `/Start AI.DEN stack` — host vs docker guidance
+
+## Repo map and ignores
+
+See **[continue-repo-context.md](continue-repo-context.md)** — `@tree` + `@repo-map`, `.continueignore`, hardware-aware signatures.
+
+## Claw Code alongside Continue
+
+See **[claw-with-continue.md](claw-with-continue.md)** — terminal agent on the same `:8765` router; not inside Continue.
 
 ## Limits (local 27B)
 

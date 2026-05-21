@@ -9,6 +9,7 @@ COPY server.py ./
 COPY research_tools.py ./
 COPY library_docs.py ./
 COPY project_tasks.py ./
+COPY workspace_roots.py ./
 # If you have other files (e.g., requirements.txt, src/), copy them too
 
 # readtags + optional docker CLI (compose tests via mounted docker.sock)

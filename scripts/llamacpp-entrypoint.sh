@@ -21,8 +21,11 @@ TOP_P="${LLAMACPP_TOP_P:-0.95}"
 TOP_K="${LLAMACPP_TOP_K:-20}"
 MIN_P="${LLAMACPP_MIN_P:-0.0}"
 REPEAT="${LLAMACPP_REPEAT_PENALTY:-1.0}"
+BATCH="${LLAMACPP_BATCH_SIZE:-512}"
+UBATCH="${LLAMACPP_UBATCH_SIZE:-256}"
 
 ARGS="-m $MODEL --host 0.0.0.0 --port 8080 -ngl $NGL --flash-attn on --jinja --ctx-size $CTX -t $THREADS -np 1"
+ARGS="$ARGS -b $BATCH -ub $UBATCH"
 if [ -n "$FIT_TARGET" ]; then
   ARGS="$ARGS --fit on --fit-target $FIT_TARGET"
 elif [ "$FIT" != "off" ] && [ "$FIT" != "0" ] && [ "$FIT" != "false" ]; then
@@ -76,7 +79,7 @@ case "$SPEC_MODE" in
     ;;
 esac
 
-echo "[llamacpp] mode=$SPEC_MODE model=$(basename "$MODEL")" >&2
+echo "[llamacpp] mode=$SPEC_MODE model=$(basename "$MODEL") ctx=$CTX batch=$BATCH ubatch=$UBATCH" >&2
 if [ -n "${LLAMACPP_DRAFT_GGUF:-}" ]; then
   echo "[llamacpp] draft=$LLAMACPP_DRAFT_GGUF n_max=$SPEC_N_MAX" >&2
 fi

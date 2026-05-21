@@ -10,6 +10,7 @@
         "list_running_models",
         "show_model",
         "ollama_version",
+        "workspace_info",
         "read_file",
         "write_file",
         "edit_file",
