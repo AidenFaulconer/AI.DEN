@@ -35,7 +35,7 @@ Use **only** these names via native tool_calls (never print XML in chat/thought 
 | Wrong project / paths fail | `workspace_info` | (no args) — shows mounted root |
 | Find files | `glob_files` | `pattern: "**/config.yaml"` |
 | List directory | `list_dir` | `path: "continue"` or `path: "."` |
-| Read file | `read_file` | `path: "continue/config.yaml"` |
+| Read file | `read_file` | `path: "frontend/src/foo.jsx"` — large files: `start_line` / `end_line` |
 | Shell | `run_command` | `command: "dir continue"` |
 | Compile/deprecation fix | `web_search` | `query: "Rust E0382 borrow moved"` |
 | Library API docs (free) | `library_docs` | `library: "react"`, `query: "useEffect cleanup"`, `ecosystem: npm` |

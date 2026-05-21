@@ -158,8 +158,22 @@ def get_tool_definitions() -> list[dict[str, Any]]:
         ),
         _tool_schema(
             "read_file",
-            "Read a file under MCP workspace_root (paths relative to the VS Code project folder, not AI.DEN unless mounted).",
-            {"path": {"type": "string", "description": "Relative path e.g. frontend/src/App.jsx"}},
+            "Read a file (or line range) under workspace_root. Large files return a chunk; use start_line/end_line for the rest.",
+            {
+                "path": {"type": "string", "description": "Relative path e.g. frontend/src/App.jsx"},
+                "start_line": {
+                    "type": "integer",
+                    "description": "1-based first line (default 1)",
+                },
+                "end_line": {
+                    "type": "integer",
+                    "description": "1-based last line inclusive (0 = auto to size limit)",
+                },
+                "max_lines": {
+                    "type": "integer",
+                    "description": "Max lines when end_line omitted (default from server)",
+                },
+            },
         ),
         _tool_schema(
             "workspace_info",
@@ -588,6 +602,9 @@ _CMD_TIMEOUT_MAX = 600
 _AGENT_MAX_STEPS_DEFAULT = max(1, min(_env_int("OLLAMA_MCP_AGENT_MAX_STEPS", 8), 20))
 _GREP_MAX_DEFAULT = max(10, min(_env_int("OLLAMA_MCP_GREP_MAX", 50), 200))
 _GLOB_MAX_DEFAULT = max(10, min(_env_int("OLLAMA_MCP_GLOB_MAX", 100), 500))
+# ~7k tokens per read_file result; router still caps full prompts separately
+_READ_MAX_CHARS = max(4000, _env_int("OLLAMA_MCP_READ_MAX_CHARS", 28000))
+_READ_MAX_LINES = max(50, _env_int("OLLAMA_MCP_READ_MAX_LINES", 800))
 
 _CMD_DENYLIST = tuple(
     s.lower()
@@ -1081,7 +1098,12 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> str:
         if name == "workspace_info":
             return _workspace_info_impl()
         if name == "read_file":
-            return await _read_file_impl(str(args.get("path", "")))
+            return await _read_file_impl(
+                str(args.get("path", "")),
+                start_line=int(args.get("start_line") or 1),
+                end_line=int(args.get("end_line") or 0),
+                max_lines=int(args.get("max_lines") or 0),
+            )
         if name == "write_file":
             return await _write_file_impl(str(args.get("path", "")), str(args.get("content", "")))
         if name == "edit_file":
@@ -1687,17 +1709,62 @@ def _workspace_info_impl() -> str:
     return "\n".join(workspace_info_lines())
 
 
-async def _read_file_impl(path: str) -> str:
+def _estimate_text_tokens(text: str) -> int:
+    return max(1, len(text) // 4)
+
+
+async def _read_file_impl(
+    path: str,
+    *,
+    start_line: int = 1,
+    end_line: int = 0,
+    max_lines: int = 0,
+) -> str:
     try:
         p = _resolve_workspace_path(path, must_exist=True)
     except FileNotFoundError as e:
         return f"Error: {e}"
     if p.is_dir():
         return f"Error: {p} is a directory, not a file"
-    text = p.read_text(encoding="utf-8")
-    if len(text) > 200_000:
-        return text[:200_000] + f"\n\n... truncated ({len(text)} chars total)"
-    return text
+
+    try:
+        raw = p.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return f"Error: {path} is not UTF-8 text; use grep_search or run_command"
+
+    lines = raw.splitlines()
+    total = len(lines)
+    if total == 0:
+        return "(empty file)"
+
+    start_line = max(1, start_line)
+    max_lines = max_lines if max_lines > 0 else _READ_MAX_LINES
+    if end_line <= 0:
+        end_line = min(total, start_line + max_lines - 1)
+        # Shrink range until chunk fits char budget (Continue counts ~chars/4 tokens)
+        while end_line >= start_line:
+            chunk = "\n".join(lines[start_line - 1 : end_line])
+            if len(chunk) <= _READ_MAX_CHARS:
+                break
+            end_line -= max(1, (end_line - start_line + 1) // 10)
+    else:
+        end_line = min(total, max(start_line, end_line))
+
+    selected = lines[start_line - 1 : end_line]
+    body = "\n".join(selected)
+    est = _estimate_text_tokens(body)
+    rel = p.relative_to(_ws()).as_posix()
+    header = f"# {rel} lines {start_line}-{end_line} of {total} (~{est} tokens)\n"
+    if start_line > 1 or end_line < total:
+        header += (
+            f"# More content: read_file path={path!r} start_line={end_line + 1} "
+            f"end_line={min(total, end_line + max_lines)}\n"
+        )
+    elif _estimate_text_tokens(raw) > _estimate_text_tokens(body) + 200:
+        header += (
+            f"# File was larger than read budget; use start_line/end_line or grep_search.\n"
+        )
+    return header + body
 
 
 async def _write_file_impl(path: str, content: str) -> str:
@@ -1869,10 +1936,20 @@ async def workspace_info() -> str:
 
 
 @mcp.tool()
-async def read_file(path: str) -> str:
-    """Read the full content of a file under the workspace."""
+async def read_file(
+    path: str,
+    start_line: int = 1,
+    end_line: int = 0,
+    max_lines: int = 0,
+) -> str:
+    """Read a file or line range. Large files are auto-chunked (use start_line for more)."""
     try:
-        return await _read_file_impl(path)
+        return await _read_file_impl(
+            path,
+            start_line=start_line,
+            end_line=end_line,
+            max_lines=max_lines,
+        )
     except Exception as e:
         return f"Error reading file: {e}"
 

@@ -28,7 +28,7 @@ Controlled by `LLAMACPP_FIT_TARGET` in `.env`:
 
 | Profile | `FIT_TARGET` | `contextLength` | `@repo-map` signatures |
 |---------|--------------|-----------------|------------------------|
-| **4GB laptop** | ≤ 768 | `8192` (or `LLAMACPP_CTX_SIZE`) | **off** (`includeSignatures: false`) |
+| **4GB laptop** | ≤ 768 | `16384` (`AIDEN_CONTINUE_CONTEXT_LENGTH`, same as llama ctx) | **off** (`includeSignatures: false`) |
 | **12GB+** | > 768 | from `.env` | **on** |
 
 Override anytime:
@@ -52,3 +52,11 @@ Then re-run `.\scripts\sync-continue-config.ps1`.
 It was commented out only to stop **~9k-token** prompts on 4GB VRAM. With ignores + no signatures + subfolder selection, re-enable it via sync (default in template).
 
 Check router header **`X-AIDEN-Prompt-Tokens-Est`** after a message; aim for **&lt; 8000** on a 3050 Ti.
+
+## `read_file` too large (8215 vs 8192)
+
+Continue rejects reads when the **whole file** exceeds `contextLength`. Fix:
+
+1. **`AIDEN_CONTINUE_CONTEXT_LENGTH=16384`** in `.env` (not 8192) — then `sync-continue-config.ps1`
+2. MCP **`read_file`** auto-chunks large files; use `start_line` / `end_line` for the rest
+3. Or **`grep_search`** for a symbol instead of reading the whole file

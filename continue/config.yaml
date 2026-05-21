@@ -19,14 +19,14 @@ models:
     defaultCompletionOptions:
       temperature: 0.15
       maxTokens: 1024
-      contextLength: 8192
+      contextLength: 16384
     requestOptions:
       timeout: 300000
     chatOptions:
       baseAgentSystemMessage: |
         You are a coding agent on AI.DEN (local Qwen + MCP). Workflow:
         1. For errors: ask user to attach @problems (VS Code diagnostics) or read @terminal output.
-        2. Use MCP tools: read_file, edit_file, grep_search, symbol_search, library_docs.
+        2. Use MCP tools: read_file (use start_line/end_line on large files), edit_file, grep_search, symbol_search, library_docs.
         3. After edits: MCP run_tests or project_tasks then run_command; stack checks via docker compose.
         4. Host-only scripts (start-aiden.bat, npm run dev): tell user to run in VS Code terminal or use @terminal.
         Never invent tool names. Use native tool_calls only.
@@ -44,7 +44,7 @@ models:
     defaultCompletionOptions:
       temperature: 0.2
       maxTokens: 1024
-      contextLength: 8192
+      contextLength: 16384
     requestOptions:
       timeout: 300000
 

@@ -30,16 +30,14 @@ $llamaModel = Get-EnvValue "LLAMA_MODEL" $coderModel
 $coderPort = Get-EnvValue "CODER_PORT" "8765"
 $llamaPort = Get-EnvValue "LLAMA_PORT" "8766"
 $mcpPort = Get-EnvValue "MCP_PORT" "5000"
-$ctxSize = Get-EnvValue "LLAMACPP_CTX_SIZE" "16384"
+$llamaCtx = Get-EnvValue "LLAMACPP_CTX_SIZE" "16384"
+# Continue contextLength gates read_file max size; router still trims prompts (AIDEN_MAX_PROMPT_TOKENS).
+$ctxSize = Get-EnvValue "AIDEN_CONTINUE_CONTEXT_LENGTH" $llamaCtx
 $maxTokens = Get-EnvValue "OLLAMA_MCP_MAX_TOKENS" "1536"
 $fitTarget = [int](Get-EnvValue "LLAMACPP_FIT_TARGET" "512")
 $repoSigs = Get-EnvValue "AIDEN_REPO_MAP_SIGNATURES" ""
 if ($repoSigs -eq "") {
     $repoSigs = if ($fitTarget -gt 768) { "true" } else { "false" }
-}
-# 4GB profile: smaller Continue window unless .env overrides ctx
-if ($fitTarget -le 768 -and $ctxSize -gt 8192) {
-    $ctxSize = "8192"
 }
 
 $rulesUri = To-FileUri (Join-Path $repoRoot "continue\rules.md")
