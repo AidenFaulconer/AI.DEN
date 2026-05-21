@@ -113,9 +113,21 @@ const MODEL_REGISTRY: &[(&str, ProviderMetadata)] = &[
     ),
 ];
 
+/// Strip provider prefixes Claw accepts on the CLI (`openai/id`, `ollama/id`).
+#[must_use]
+pub fn strip_provider_prefix(model: &str) -> &str {
+    let trimmed = model.trim();
+    trimmed
+        .strip_prefix("openai/")
+        .or_else(|| trimmed.strip_prefix("OpenAI/"))
+        .or_else(|| trimmed.strip_prefix("ollama/"))
+        .or_else(|| trimmed.strip_prefix("Ollama/"))
+        .unwrap_or(trimmed)
+}
+
 #[must_use]
 pub fn resolve_model_alias(model: &str) -> String {
-    let trimmed = model.trim();
+    let trimmed = strip_provider_prefix(model);
     let lower = trimmed.to_ascii_lowercase();
     MODEL_REGISTRY
         .iter()
@@ -163,17 +175,26 @@ pub fn metadata_for_model(model: &str) -> Option<ProviderMetadata> {
 
 #[must_use]
 pub fn detect_provider_kind(model: &str) -> ProviderKind {
+    let trimmed = model.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("openai/") || lower.starts_with("ollama/") {
+        return ProviderKind::OpenAi;
+    }
     if let Some(metadata) = metadata_for_model(model) {
         return metadata.provider;
     }
-    if anthropic::has_auth_from_env_or_saved().unwrap_or(false) {
-        return ProviderKind::Anthropic;
+    // Local AI.DEN / Ollama / LM Studio: OPENAI_BASE_URL set, key often a placeholder.
+    if openai_compat::has_openai_compat_endpoint() {
+        return ProviderKind::OpenAi;
     }
     if openai_compat::has_api_key("OPENAI_API_KEY") {
         return ProviderKind::OpenAi;
     }
     if openai_compat::has_api_key("XAI_API_KEY") {
         return ProviderKind::Xai;
+    }
+    if anthropic::has_auth_from_env_or_saved().unwrap_or(false) {
+        return ProviderKind::Anthropic;
     }
     ProviderKind::Anthropic
 }
@@ -205,6 +226,18 @@ mod tests {
         assert_eq!(
             detect_provider_kind("claude-sonnet-4-6"),
             ProviderKind::Anthropic
+        );
+        assert_eq!(
+            detect_provider_kind("openai/Qwen3.6-27B-MTP-UD-Q4_K_XL.gguf"),
+            ProviderKind::OpenAi
+        );
+    }
+
+    #[test]
+    fn strips_openai_prefix_for_wire_model_id() {
+        assert_eq!(
+            resolve_model_alias("openai/Qwen3.6-27B-MTP-UD-Q4_K_XL.gguf"),
+            "Qwen3.6-27B-MTP-UD-Q4_K_XL.gguf"
         );
     }
 

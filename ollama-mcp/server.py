@@ -656,7 +656,13 @@ def _session_dir() -> Path:
 
 def _max_prompt_tokens() -> int:
     reserve = max(1024, _CTX_RESERVE)
-    return max(4096, _CTX_SIZE - reserve)
+    budget = max(4096, _CTX_SIZE - reserve)
+    hard = _env_int("AIDEN_MAX_PROMPT_TOKENS", 0)
+    if hard > 2048:
+        budget = min(budget, hard)
+    margin = _env_float("AIDEN_PROMPT_ESTIMATE_MARGIN", 0.90)
+    margin = max(0.75, min(0.98, margin))
+    return max(4096, int(budget * margin))
 
 
 def _message_text(m: dict[str, Any]) -> str:
@@ -672,9 +678,143 @@ def _message_text(m: dict[str, Any]) -> str:
     return ""
 
 
+_CHECKLIST_ANCHOR_TAG = "[AIDEN-CHECKLIST-ANCHOR]"
+_CHECKLIST_LINE_RE = re.compile(
+    r"^(\s*(?:[-*+]|\d+\.)\s*)\[([ xX~>\-])\]\s*(.+?)\s*$",
+    re.MULTILINE,
+)
+
+
+def _checklist_anchor_enabled() -> bool:
+    v = os.environ.get("OLLAMA_MCP_CHECKLIST_ANCHOR", "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
+
+
+def _parse_checklist_block(text: str) -> dict[str, bool]:
+    """item text (normalized key) -> done."""
+    items: dict[str, bool] = {}
+    if _CHECKLIST_ANCHOR_TAG in text:
+        section = text.split(_CHECKLIST_ANCHOR_TAG, 1)[-1]
+        for line in section.splitlines():
+            line = line.strip()
+            if not line.startswith("- "):
+                continue
+            m = re.match(r"^-\s*\[([ xX~>\-])\]\s*(.+)$", line)
+            if not m:
+                continue
+            label = m.group(2).strip()
+            if label.upper().startswith("CURRENT"):
+                continue
+            key = label.lower()
+            items[key] = m.group(1).lower() in ("x", "~", ">")
+        return items
+    for m in _CHECKLIST_LINE_RE.finditer(text):
+        label = m.group(3).strip()
+        if not label:
+            continue
+        key = label.lower()
+        done = m.group(2).lower() in ("x", "~", ">")
+        items[key] = done
+    return items
+
+
+def _merge_checklist_states(messages: list[dict[str, Any]]) -> list[tuple[str, bool]]:
+    """Chronological merge: later messages override checkbox state for the same item."""
+    merged: dict[str, bool] = {}
+    order: list[str] = []
+    for m in messages:
+        for key, done in _parse_checklist_block(_message_text(m)).items():
+            if key not in merged:
+                order.append(key)
+            merged[key] = done
+    return [(k, merged[k]) for k in order]
+
+
+def _task_goal_from_messages(messages: list[dict[str, Any]]) -> str:
+    for m in messages:
+        if m.get("role") != "user":
+            continue
+        text = _message_text(m).strip()
+        if not text or text.startswith("[AIDEN-"):
+            continue
+        first = text.splitlines()[0].strip()
+        if len(first) > 240:
+            first = first[:237] + "..."
+        return first
+    return ""
+
+
+def _extract_checklist_anchor(messages: list[dict[str, Any]]) -> str | None:
+    """Build a durable checklist anchor for context compaction / Continue resume."""
+    if not _checklist_anchor_enabled():
+        return None
+    items = _merge_checklist_states(messages)
+    if not items:
+        return None
+    current: str | None = None
+    for label, done in items:
+        if not done:
+            current = label
+            break
+    lines = [
+        _CHECKLIST_ANCHOR_TAG,
+        "Task plan — preserve until done; after context trim, continue from CURRENT (do not restart):",
+    ]
+    goal = _task_goal_from_messages(messages)
+    if goal:
+        lines.append(f"Goal: {goal}")
+    for label, done in items:
+        mark = "[x]" if done else "[ ]"
+        lines.append(f"- {mark} {label}")
+    if current:
+        lines.append(f"CURRENT (resume here): {current}")
+    elif items and all(d for _, d in items):
+        lines.append("CURRENT: all checklist items done — verify with user, then close out.")
+    lines.append(
+        "Rules: Keep this checklist updated as you work. On context compaction, resume from CURRENT "
+        "and retain every item with correct [x]/[ ] state."
+    )
+    return "\n".join(lines)
+
+
+def _messages_contain_checklist_anchor(messages: list[dict[str, Any]]) -> bool:
+    return any(_CHECKLIST_ANCHOR_TAG in _message_text(m) for m in messages)
+
+
+def _ensure_checklist_anchor_in_messages(messages: list[dict[str, Any]]) -> bool:
+    """Inject anchor after system messages if a checklist exists but anchor is missing."""
+    anchor = _extract_checklist_anchor(messages)
+    if not anchor or _messages_contain_checklist_anchor(messages):
+        return False
+    insert_at = 1
+    for i, m in enumerate(messages):
+        if m.get("role") in ("system", "developer"):
+            insert_at = i + 1
+        else:
+            break
+    messages.insert(insert_at, {"role": "user", "content": anchor})
+    return True
+
+
+def _prepend_checklist_to_content(content: str, anchor: str | None) -> str:
+    if not anchor:
+        return content
+    if _CHECKLIST_ANCHOR_TAG in content:
+        return content
+    return f"{anchor}\n\n{content}"
+
+
+def _chars_per_token() -> float:
+    try:
+        v = float(os.environ.get("AIDEN_CHARS_PER_TOKEN", "2.8"))
+    except ValueError:
+        v = 2.8
+    return max(2.5, min(6.0, v))
+
+
 def _estimate_messages_tokens(messages: list[dict[str, Any]]) -> int:
     chars = sum(len(_message_text(m)) + 24 for m in messages)
-    return max(1, chars // 4)
+    return max(1, int(chars / _chars_per_token()))
 
 
 def _shrink_text(text: str, max_chars: int, marker: str) -> str:
@@ -724,13 +864,15 @@ def _drop_middle_with_summary(messages: list[dict[str, Any]], max_prompt: int) -
         if dropped > 400:
             break
     if changed and dropped > 0:
+        anchor = _extract_checklist_anchor(messages)
+        body = (
+            f"[AIDEN-CONTEXT] {dropped} earlier message(s) removed to stay within context. "
+            "Continue the chat from the checklist anchor and recent tool results. "
+            "Re-read files or re-run commands if you need dropped detail."
+        )
         summary = {
             "role": "user",
-            "content": (
-                f"[AIDEN-CONTEXT] {dropped} earlier message(s) removed to stay within context. "
-                "Continue from recent tool results and the original task. "
-                "Re-read files or re-run commands if you need dropped detail."
-            ),
+            "content": _prepend_checklist_to_content(body, anchor),
         }
         insert_at = 1
         for i, m in enumerate(messages):
@@ -757,6 +899,7 @@ async def _summarize_transcript(
     options: dict[str, Any] | None,
     *,
     max_words: int = 400,
+    checklist_anchor: str | None = None,
 ) -> str:
     """LLM summary of dropped history (no tools)."""
     lines: list[str] = []
@@ -779,6 +922,13 @@ async def _summarize_transcript(
         style = (
             f"Summarize this agent conversation for continuation. Include: goal, files touched, "
             f"commands run, errors, fixes applied, and what remains. Be dense, under {max_words} words.\n\n"
+        )
+    anchor = checklist_anchor or _extract_checklist_anchor(messages)
+    if anchor:
+        style += (
+            "CRITICAL: A task checklist exists. Copy EVERY checklist line with exact [x] or [ ] "
+            "status. State which item is CURRENT (first unchecked). Do not drop or reorder checklist items.\n\n"
+            f"{anchor}\n\n---\n"
         )
     prompt = style + blob
     payload = _apply_generation_controls(
@@ -810,15 +960,17 @@ def _emergency_strip_messages(messages: list[dict[str, Any]]) -> list[dict[str, 
     non_system = [m for m in messages if m.get("role") not in ("system", "developer")]
     tail = non_system[-3:] if len(non_system) >= 3 else non_system
     out: list[dict[str, Any]] = []
+    anchor = _extract_checklist_anchor(messages)
     out.extend(system_msgs)
+    emergency = (
+        "[AIDEN-EMERGENCY-CONTEXT] History was stripped to fit the context window. "
+        "Use read_file, grep_search, or re-run commands to recover detail. "
+        "Continue the chat from the checklist CURRENT line and the latest user request."
+    )
     out.append(
         {
             "role": "user",
-            "content": (
-                "[AIDEN-EMERGENCY-CONTEXT] History was stripped to fit the context window. "
-                "Use read_file, grep_search, or re-run commands to recover detail. "
-                "Continue the user's latest request."
-            ),
+            "content": _prepend_checklist_to_content(emergency, anchor),
         }
     )
     out.extend(tail)
@@ -843,13 +995,17 @@ async def _compact_messages_llm(
     if not middle:
         return messages
 
-    summary = await _summarize_transcript(model, middle, options, max_words=max_words)
+    anchor = _extract_checklist_anchor(messages)
+    summary = await _summarize_transcript(
+        model, middle, options, max_words=max_words, checklist_anchor=anchor
+    )
+    body = f"[AIDEN-SESSION-SUMMARY:{label}]\n{summary}\n\nContinue the chat from here."
     compacted: list[dict[str, Any]] = []
     compacted.extend(system_msgs)
     compacted.append(
         {
             "role": "user",
-            "content": f"[AIDEN-SESSION-SUMMARY:{label}]\n{summary}\n\nContinue the task from here.",
+            "content": _prepend_checklist_to_content(body, anchor),
         }
     )
     compacted.extend(tail)
@@ -874,11 +1030,12 @@ async def _ensure_context_fits(
         est = _estimate_messages_tokens(working)
         if est <= budget:
             if tier_used > 0:
+                _ensure_checklist_anchor_in_messages(working)
                 logger.info(
                     "context %s: tier %d ok, ~%d tok (budget %d)",
                     reason,
                     tier_used,
-                    est,
+                    _estimate_messages_tokens(working),
                     budget,
                 )
             return working, tier_used
@@ -1396,7 +1553,12 @@ async def _agent_loop(
         fitted, tier = await _ensure_context_fits(model, messages, options, reason=f"agent-step-{step}")
         if tier > 0:
             messages[:] = fitted
-            transcript.append(f"[context compacted tier {tier} before step {step}]")
+            anchor = _extract_checklist_anchor(messages)
+            note = f"[context compacted tier {tier} before step {step}]"
+            if anchor and "CURRENT (resume here):" in anchor:
+                cur = anchor.split("CURRENT (resume here):", 1)[-1].splitlines()[0].strip()
+                note += f" Resume checklist at: {cur}"
+            transcript.append(note)
 
         try:
             msg, content, tool_calls = await _chat_completion_safe(

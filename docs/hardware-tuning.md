@@ -22,6 +22,23 @@ Profiles for **Qwen3.6-27B-MTP** via `llamacpp` + **model-router** + **MCP**.
 | `-np 1` | (entrypoint) | MTP requires single parallel slot |
 | `LLAMACPP_GGUF` | `*-MTP-*.gguf` | Non-MTP files cannot use MTP |
 
+## Speed vs CPU (what changed in git)
+
+Commit **`6200e57`** (“reduce CPU usage”) slowed **prompt eval** on this laptop by design:
+
+| Setting | Before (faster) | After (6200e57) | Effect on your logs |
+|---------|-------------------|-------------------|---------------------|
+| `LLAMACPP_SPEC_MODE` | `mtp` | `none` | No MTP heads → much slower prefill |
+| `LLAMACPP_THREADS` | `14` (`.env`) / `8` (example) | `6` | Less CPU parallelism for 27B on CPU |
+| `LLAMACPP_BATCH_SIZE` / `UBATCH` | `512` / `256` | `384` / `192` | Smaller prompt-eval batches |
+| `AIDEN_CHARS_PER_TOKEN` | ~4 (implicit) | `3.5` | Router under-trims → **6911 real tokens** while cap is **6144** |
+
+**~80 tok/s** in guides is the **12 GB+ VRAM** profile (`FIT_TARGET=1536`, most layers on GPU), not RTX 3050 Ti 4 GB with 27B Q4. On 4 GB, **20–45 tok/s prompt eval** on multi‑k token prompts is normal when much of the model is on CPU.
+
+**499** in your log = client (Continue) cancelled after ~4+ min — not a server crash.
+
+**Recovery (now default in `.env`):** `LLAMACPP_SPEC_MODE=mtp`, `LLAMACPP_THREADS=14`, empty `LLAMACPP_FIT_TARGET`, batch `512`/`256`, `AIDEN_CHARS_PER_TOKEN=2.8`, `AIDEN_PROMPT_ESTIMATE_MARGIN=0.90`.
+
 ## Less CPU usage (RTX 3050 Ti / 4GB)
 
 Most CPU load is **not** the router — it is **llama.cpp running most of the 27B on CPU** when `LLAMACPP_FIT_TARGET` is low (512 MiB GPU budget).
@@ -40,20 +57,25 @@ Apply: `docker compose up -d --force-recreate llamacpp model-router`
 
 For **minimum CPU**, use a smaller coder model (7B–14B) or cloud API — 27B Q4 on 4GB will always be CPU-heavy.
 
-## 4 GB VRAM profile (current `.env`)
+## 4 GB VRAM profile — speed (default after regression fix)
 
 ```env
-LLAMACPP_FIT_TARGET=768
-LLAMACPP_CTX_SIZE=12288
-LLAMACPP_THREADS=6
-LLAMACPP_SPEC_MODE=none
+LLAMACPP_FIT_TARGET=
+LLAMACPP_CTX_SIZE=16384
+LLAMACPP_THREADS=14
+LLAMACPP_SPEC_MODE=mtp
+LLAMACPP_BATCH_SIZE=512
 AIDEN_MAX_PROMPT_TOKENS=6144
+AIDEN_CHARS_PER_TOKEN=2.8
+AIDEN_PROMPT_ESTIMATE_MARGIN=0.90
 PROMPT_PIPELINE=caveman
-OLLAMA_MCP_MAX_TOKENS=1536
 ```
 
-- **`LLAMACPP_FIT_TARGET=768`** — more layers on GPU, less CPU (if OOM, drop to `512`).
-- **`LLAMACPP_SPEC_MODE=none`** — lowest decode CPU on 4GB; use `mtp` if you want faster tokens and can spare CPU.
+- **`LLAMACPP_FIT_TARGET=768`** — stable on 4GB; empty auto-fit can OOM (exit 137). Drop to `512` if needed.
+- **`LLAMACPP_SPEC_MODE=mtp`** — required for speed on this GGUF; `none` was a regression (~2–4× slower prefill).
+- **`AIDEN_PROMPT_ESTIMATE_MARGIN=0.90`** — router/MCP trim to ~90% of cap so llama does not see 7k tokens when cap is 6144.
+
+Low-CPU alternate: `LLAMACPP_THREADS=6`, `LLAMACPP_SPEC_MODE=none`, `LLAMACPP_CTX_SIZE=12288` — see section above.
 - **`PROMPT_PIPELINE=caveman`** — drops the extra claw system block (~1–2k tokens). Use `claw,caveman` for hard multi-file agent tasks.
 - **MCP `temperature=0.15`** — overrides server defaults for tool calls (accuracy over creativity).
 

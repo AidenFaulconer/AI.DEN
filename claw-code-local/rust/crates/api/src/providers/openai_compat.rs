@@ -92,11 +92,15 @@ impl OpenAiCompatClient {
     }
 
     pub fn from_env(config: OpenAiCompatConfig) -> Result<Self, ApiError> {
-        let Some(api_key) = read_env_non_empty(config.api_key_env)? else {
-            return Err(ApiError::missing_credentials(
-                config.provider_name,
-                config.credential_env_vars(),
-            ));
+        let api_key = match read_env_non_empty(config.api_key_env)? {
+            Some(key) => key,
+            None if has_openai_compat_endpoint() => "ollama".to_string(),
+            None => {
+                return Err(ApiError::missing_credentials(
+                    config.provider_name,
+                    config.credential_env_vars(),
+                ));
+            }
         };
         Ok(Self::new(api_key, config))
     }
@@ -874,6 +878,18 @@ pub fn has_api_key(key: &str) -> bool {
         .ok()
         .and_then(std::convert::identity)
         .is_some()
+}
+
+/// True when a non-default OpenAI-compatible base URL is configured (Ollama, AI.DEN, LM Studio, …).
+#[must_use]
+pub fn has_openai_compat_endpoint() -> bool {
+    match std::env::var("OPENAI_BASE_URL") {
+        Ok(url) => {
+            let trimmed = url.trim();
+            !trimmed.is_empty() && trimmed != DEFAULT_OPENAI_BASE_URL
+        }
+        Err(_) => false,
+    }
 }
 
 #[must_use]

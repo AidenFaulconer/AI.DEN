@@ -59,8 +59,9 @@ if /i "%~1"=="gateway" (
     set "SKIP=1"
 )
 
-set "OPENAI_API_KEY="
-:: Avoid accidental Anthropic routing when hacking on local models
+:: Non-empty placeholder for OpenAI-compat (Ollama / AI.DEN); value is not sent to local stack.
+set "OPENAI_API_KEY=ollama"
+:: Avoid accidental Anthropic routing when using local models
 set "ANTHROPIC_API_KEY="
 set "ANTHROPIC_AUTH_TOKEN="
 
@@ -145,10 +146,10 @@ if "!SKIP!"=="1" (
 if "!CLAW_USE_DOCKER!"=="1" (
     if "!ARGS!"=="" (
         echo Running: docker compose run clawcode --model "!CLAW_MODEL!"
-        docker compose --profile claw run --rm -it -e "OPENAI_BASE_URL=!OPENAI_BASE_URL!" -e OPENAI_API_KEY= -e ANTHROPIC_API_KEY= -e ANTHROPIC_AUTH_TOKEN= clawcode --model "!CLAW_MODEL!"
+        docker compose --profile claw run --rm -it -e "OPENAI_BASE_URL=!OPENAI_BASE_URL!" -e "OPENAI_API_KEY=!OPENAI_API_KEY!" -e ANTHROPIC_API_KEY= -e ANTHROPIC_AUTH_TOKEN= clawcode --model "!CLAW_MODEL!"
     ) else (
         echo Running: docker compose run clawcode --model "!CLAW_MODEL!" !ARGS!
-        docker compose --profile claw run --rm -it -e "OPENAI_BASE_URL=!OPENAI_BASE_URL!" -e OPENAI_API_KEY= -e ANTHROPIC_AUTH_TOKEN= clawcode --model "!CLAW_MODEL!" !ARGS!
+        docker compose --profile claw run --rm -it -e "OPENAI_BASE_URL=!OPENAI_BASE_URL!" -e "OPENAI_API_KEY=!OPENAI_API_KEY!" -e ANTHROPIC_API_KEY= -e ANTHROPIC_AUTH_TOKEN= clawcode --model "!CLAW_MODEL!" !ARGS!
     )
 ) else (
     if "!ARGS!"=="" (
@@ -167,8 +168,8 @@ endlocal & exit /b 1
 echo.
 echo launch-claw.bat  [ coder ^| general ^| vision ^| gateway ]  [claw args...]
 echo.
-echo Sets OPENAI_BASE_URL to AI.DEN proxy ; clears OPENAI_API_KEY ^(Ollama-style per upstream USAGE^).
-echo Clears ANTHROPIC_* for this session so local models do not drift to Claude API.
+echo Sets OPENAI_BASE_URL to AI.DEN proxy and OPENAI_API_KEY=ollama ^(required for OpenAI-compat routing^).
+echo Clears ANTHROPIC_* so local models do not drift to Claude API.
 echo Bare Ollama names from `.env` run as `--model openai/^<id^>` ^(Claw syntax; proxy still sees the real id^).
 echo.
 echo   coder ^(default^)  port CODER_PORT  + model CODER_MODEL

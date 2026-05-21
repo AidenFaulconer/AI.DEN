@@ -27,9 +27,13 @@ You run against the local AI.DEN stack (model-router + llama.cpp), not cloud API
 
 Continue does not embed Claw. Same AI stack: `launch-claw.bat` → `:8765`. Slash **`/Claw terminal`** or `docs/claw-with-continue.md`. Optional MCP: `continue/claw.settings.example.json` → `%USERPROFILE%\.claw\settings.json`.
 
-## Context full?
+## Context full? (continue the same chat)
 
-The stack auto-compacts: tool shrink → LLM summary → shorter summary → emergency strip. If the agent says context was compacted, re-`read_file` or `grep_search` anything dropped. Headers: `X-AIDEN-Context-Truncated`, `X-AIDEN-Context-Tier`.
+The stack auto-compacts: tool shrink → LLM summary → shorter summary → emergency strip. **Do not start over** — keep chatting in the same thread.
+
+- **Checklist anchor:** If you use a task list (`- [ ]` / `- [x]`), the stack injects `[AIDEN-CHECKLIST-ANCHOR]` with **CURRENT (resume here)** when context trims. Update checkboxes as you go; after compaction, pick up at CURRENT.
+- Re-`read_file` or `grep_search` only for detail that was dropped — not to redo finished checklist items.
+- Headers: `X-AIDEN-Context-Truncated`, `X-AIDEN-Context-Tier`.
 
 ## MCP workspace (important)
 

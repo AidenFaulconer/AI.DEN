@@ -21,7 +21,7 @@ models:
     defaultCompletionOptions:
       temperature: 0.15
       maxTokens: 1024
-      contextLength: 12288
+      contextLength: 16384
     requestOptions:
       timeout: 300000
     chatOptions:
@@ -42,7 +42,9 @@ models:
 
         Context / CPU (RTX 3050 Ti 4GB):
         - Prefer @tree or @repo-map on a subfolder — not whole monorepo.
-        - Keep chats shorter; router caps prompts (~6k tokens). Start a new chat if slow or 413.
+        - When context compacts, keep going in the same chat — do not restart the task.
+        - For multi-step work, maintain a markdown checklist (- [ ] / - [x]) and update it each step.
+        - After [AIDEN-CONTEXT] or [AIDEN-CHECKLIST-ANCHOR], resume from CURRENT (first unchecked item).
         - Use MCP tools only via native tool_calls (read_file, glob_files, edit_file, grep_search,
           list_dir, workspace_info, symbol_search, library_docs, run_command, project_tasks).
 
@@ -64,7 +66,7 @@ models:
     defaultCompletionOptions:
       temperature: 0.2
       maxTokens: 1024
-      contextLength: 12288
+      contextLength: 16384
     requestOptions:
       timeout: 300000
 

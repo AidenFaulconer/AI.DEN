@@ -306,17 +306,17 @@ Template lives in-repo: `continue/config.yaml` and `continue/rules.md`.
 
 ## Claw Code CLI (terminal agent)
 
-[Claw Code](https://github.com/ultraworkers/claw-code) is an open-source Rust CLI agent harness. AI.DEN integrates it via **`launch-claw.bat`**, which points Claw at this stack’s **OpenAI-compatible** proxies (same routed **prompt pipeline** as Cursor): `OPENAI_BASE_URL=http://127.0.0.1:<port>/v1` with **no** API key, matching upstream [USAGE.md](https://github.com/ultraworkers/claw-code/blob/main/USAGE.md) Ollama-style setup.
+[Claw Code](https://github.com/ultraworkers/claw-code) is an open-source Rust CLI agent harness. AI.DEN integrates it via **`launch-claw.bat`**, which points Claw at this stack’s **OpenAI-compatible** proxies (same routed **prompt pipeline** as Cursor): `OPENAI_BASE_URL=http://127.0.0.1:<port>/v1` and `OPENAI_API_KEY=ollama` (placeholder — local stack does not validate it). See [claw-code-local/README.md](claw-code-local/README.md).
 
 ### One-time setup
 
 **Option A — Docker (recommended if you skip local Rust):** from the AI.DEN repo root, build the image once (first build is slow):
 
 ```powershell
-docker compose --profile claw build openclaw
+docker compose --profile claw build clawcode
 ```
 
-**`launch-claw.bat`** then runs **`aiden-openclaw:local`** when `claw.exe` is missing, with `OPENAI_BASE_URL=http://host.docker.internal:<port>/v1` so the container can reach the proxies on the host.
+**`launch-claw.bat`** then runs **`aiden-clawcode:local`** when `claw.exe` is missing, with `OPENAI_BASE_URL=http://host.docker.internal:<port>/v1` so the container can reach the proxies on the host. Do **not** set `ANTHROPIC_*` in the claw container — that forces Claude API routing.
 
 **Option B — Native build:**
 
