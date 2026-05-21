@@ -70,7 +70,31 @@ Coding agents should stay **low temperature**; raise `LLAMACPP_TEMP` only for op
 | `OLLAMA_MCP_PRESERVE_RECENT` | Turns kept verbatim (3) |
 | `OLLAMA_MCP_MAX_TOKENS` | Cap completion length per MCP step |
 
-Watch response headers: `X-AIDEN-Prompt-Tokens-Est` (every request), `X-AIDEN-Context-Truncated`.
+Watch response headers: `X-AIDEN-Prompt-Tokens-Est` (every request), `X-AIDEN-Context-Truncated`, `X-AIDEN-Context-Tier` (router).
+
+## Caveman vs context compression
+
+| Use | What caveman does here | Effective? |
+|-----|------------------------|------------|
+| **Every chat** (`PROMPT_PIPELINE=caveman`) | Router injects `proxy/caveman-system.txt` → model replies **terser** (fewer **output** tokens) | Yes for completions |
+| **Cost** | That system block adds ~1–2k **input** tokens per request | Tradeoff on 4GB |
+| **Context compaction** | Separate ladder (tool shrink → LLM summary → emergency) | Yes for long agent runs |
+| **Session summaries** | Tier 1/2 summaries now ask for **caveman-style** text when `PROMPT_PIPELINE` includes `caveman` | Yes — denser rollups |
+
+Caveman is **not** the same as `caveman-compress/` in the repo (that skill targets Anthropic API for file compression). Local stack uses **style instructions**, not that script.
+
+`claw,caveman` adds claw planning block + caveman — more input tokens, use only for hard multi-file tasks.
+
+## Context overflow failover (automatic)
+
+| Tier | MCP / agent_chat | model-router (Continue chat) |
+|------|------------------|----------------------------|
+| 0 | Compress old tool outputs; drop middle turns | Same + per-message shrink |
+| 1 | LLM **summary** (~400 words) + keep recent turns | Drop oldest turns |
+| 2 | **Shorter** summary (~120 words) + fewer preserved tools | Tighter tool/msg caps |
+| 3 | **Emergency**: system + last 3 turns + re-read hint | Emergency strip |
+
+Proactive at **72%** of prompt budget (`OLLAMA_MCP_COMPACT_THRESHOLD`). On llama **overflow**, tiers escalate (up to 3 retries). Tune via `OLLAMA_MCP_COMPACT_MAX_TIERS`, `OLLAMA_MCP_SUMMARY_WORDS*`.
 
 ### Slow logs (`prompt eval` 180s+, `tg` ~1.1 t/s)
 

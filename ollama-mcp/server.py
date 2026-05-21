@@ -29,7 +29,9 @@ from mcp.server.fastmcp import Context, FastMCP
 from workspace_roots import (
     MOUNT_CONTAINER,
     MOUNT_HOST,
+    activate_workspace,
     active_workspace_root,
+    find_file_under_mount,
     static_workspace_root,
     workspace_info_lines,
     workspace_scope,
@@ -438,7 +440,10 @@ async def _call_tool_with_workspace(
     context: Context | None = None,
     convert_result: bool = False,
 ):
-    async with workspace_scope(context):
+    rel = ""
+    if name in ("read_file", "write_file", "edit_file", "list_dir", "grep_search", "glob_files"):
+        rel = str(arguments.get("path") or arguments.get("cwd") or "")
+    async with workspace_scope(context, relative_path=rel):
         return await _tm_call_tool(name, arguments, context=context, convert_result=convert_result)
 
 
@@ -465,8 +470,8 @@ async def health_check(request):  # noqa: ARG001
             "mount_host": str(MOUNT_HOST),
             "sample_entries": sample,
             "hint": "read_file paths are relative to workspace_root. "
-            "Roots follow the VS Code/Continue workspace when the client supports MCP roots. "
-            "Docker mount (AIDEN_MCP_WORKSPACE_HOST) must include that folder (parent dir is fine).",
+            "Uses MCP roots + searches full mount if missing. "
+            "Set AIDEN_MCP_WORKSPACE_HOST to a parent folder (..) and recreate mcp-server.",
         }
     )
 
@@ -628,6 +633,21 @@ _CTX_RESERVE = _env_int("OLLAMA_MCP_CTX_RESERVE", _env_int("AIDEN_CTX_RESERVE", 
 _TOOL_RESULT_MAX = _env_int("OLLAMA_MCP_TOOL_RESULT_MAX", 4000)
 _COMPACT_THRESHOLD = _env_float("OLLAMA_MCP_COMPACT_THRESHOLD", 0.82)
 _PRESERVE_RECENT = max(2, _env_int("OLLAMA_MCP_PRESERVE_RECENT", 6))
+_COMPACT_MAX_TIERS = max(1, min(_env_int("OLLAMA_MCP_COMPACT_MAX_TIERS", 4), 6))
+_SUMMARY_WORDS = max(80, _env_int("OLLAMA_MCP_SUMMARY_WORDS", 400))
+_SUMMARY_WORDS_AGGRESSIVE = max(40, _env_int("OLLAMA_MCP_SUMMARY_WORDS_AGGRESSIVE", 120))
+_EMERGENCY_MSG_CHARS = max(800, _env_int("OLLAMA_MCP_EMERGENCY_MSG_CHARS", 2000))
+
+
+def _summary_uses_caveman() -> bool:
+    """Match router PROMPT_PIPELINE unless AIDEN_SUMMARY_CAVEMAN overrides."""
+    override = os.environ.get("AIDEN_SUMMARY_CAVEMAN", "").strip().lower()
+    if override in ("1", "true", "yes", "on"):
+        return True
+    if override in ("0", "false", "no", "off"):
+        return False
+    pipe = (os.environ.get("PROMPT_PIPELINE") or "caveman").lower()
+    return "caveman" in pipe
 def _session_dir() -> Path:
     d = _ws() / ".aiden-agent-sessions"
     d.mkdir(parents=True, exist_ok=True)
@@ -735,6 +755,8 @@ async def _summarize_transcript(
     model: str,
     messages: list[dict[str, Any]],
     options: dict[str, Any] | None,
+    *,
+    max_words: int = 400,
 ) -> str:
     """LLM summary of dropped history (no tools)."""
     lines: list[str] = []
@@ -747,20 +769,160 @@ async def _summarize_transcript(
             text = _shrink_text(text, 1500, "…")
         lines.append(f"{role}: {text}")
     blob = "\n".join(lines[-40:])
-    prompt = (
-        "Summarize this agent conversation for continuation. Include: goal, files touched, "
-        "commands run, errors, fixes applied, and what remains. Be dense, under 400 words.\n\n"
-        + blob
-    )
+    if _summary_uses_caveman():
+        style = (
+            f"Summarize for continuation in terse caveman style (drop filler; fragments OK; "
+            f"keep paths/commands/errors exact). Cover: goal, files, commands, errors, fixes, "
+            f"remaining work. Under {max_words} words.\n\n"
+        )
+    else:
+        style = (
+            f"Summarize this agent conversation for continuation. Include: goal, files touched, "
+            f"commands run, errors, fixes applied, and what remains. Be dense, under {max_words} words.\n\n"
+        )
+    prompt = style + blob
     payload = _apply_generation_controls(
         {"model": model, "messages": [{"role": "user", "content": prompt}]},
         options=options,
     )
     _apply_chat_defaults(payload)
     if OLLAMA_API_STYLE == "openai":
-        payload["max_tokens"] = min(768, _env_int("OLLAMA_MCP_MAX_TOKENS", 1536))
+        cap = min(768, max(128, max_words * 2))
+        payload["max_tokens"] = min(cap, _env_int("OLLAMA_MCP_MAX_TOKENS", 1536))
     _, content, _ = await _chat_completion(payload)
     return content.strip() or "Prior work occurred; details omitted for context limit."
+
+
+def _hard_cap_message_sizes(messages: list[dict[str, Any]], max_chars: int) -> None:
+    for m in messages:
+        text = _message_text(m)
+        if len(text) > max_chars:
+            m["content"] = _shrink_text(
+                text,
+                max_chars,
+                "\n[AIDEN: emergency context trim]",
+            )
+
+
+def _emergency_strip_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Last resort: system + one summary line + last few turns only."""
+    system_msgs = [m for m in messages if m.get("role") in ("system", "developer")]
+    non_system = [m for m in messages if m.get("role") not in ("system", "developer")]
+    tail = non_system[-3:] if len(non_system) >= 3 else non_system
+    out: list[dict[str, Any]] = []
+    out.extend(system_msgs)
+    out.append(
+        {
+            "role": "user",
+            "content": (
+                "[AIDEN-EMERGENCY-CONTEXT] History was stripped to fit the context window. "
+                "Use read_file, grep_search, or re-run commands to recover detail. "
+                "Continue the user's latest request."
+            ),
+        }
+    )
+    out.extend(tail)
+    _hard_cap_message_sizes(out, _EMERGENCY_MSG_CHARS)
+    return out
+
+
+async def _compact_messages_llm(
+    model: str,
+    messages: list[dict[str, Any]],
+    options: dict[str, Any] | None,
+    *,
+    max_words: int,
+    preserve_recent: int,
+    label: str,
+) -> list[dict[str, Any]]:
+    """Replace middle history with an LLM summary; keep system + recent tail."""
+    system_msgs = [m for m in messages if m.get("role") in ("system", "developer")]
+    preserve_recent = max(2, preserve_recent)
+    tail = messages[-preserve_recent:]
+    middle = messages[len(system_msgs) : len(messages) - len(tail)]
+    if not middle:
+        return messages
+
+    summary = await _summarize_transcript(model, middle, options, max_words=max_words)
+    compacted: list[dict[str, Any]] = []
+    compacted.extend(system_msgs)
+    compacted.append(
+        {
+            "role": "user",
+            "content": f"[AIDEN-SESSION-SUMMARY:{label}]\n{summary}\n\nContinue the task from here.",
+        }
+    )
+    compacted.extend(tail)
+    return compacted
+
+
+async def _ensure_context_fits(
+    model: str,
+    messages: list[dict[str, Any]],
+    options: dict[str, Any] | None,
+    *,
+    reason: str = "proactive",
+    start_tier: int = 0,
+) -> tuple[list[dict[str, Any]], int]:
+    """Multi-tier failover until messages fit the prompt budget. Returns (messages, tier_used)."""
+    budget = _max_prompt_tokens()
+    working = [dict(m) for m in messages]
+    tier_used = 0
+    start_tier = max(0, min(start_tier, _COMPACT_MAX_TIERS - 1))
+
+    for tier in range(start_tier, _COMPACT_MAX_TIERS):
+        est = _estimate_messages_tokens(working)
+        if est <= budget:
+            if tier_used > 0:
+                logger.info(
+                    "context %s: tier %d ok, ~%d tok (budget %d)",
+                    reason,
+                    tier_used,
+                    est,
+                    budget,
+                )
+            return working, tier_used
+
+        tier_used = tier + 1
+        before = est
+
+        if tier == 0:
+            _heuristic_compress_messages(working)
+        elif tier == 1:
+            working = await _compact_messages_llm(
+                model,
+                working,
+                options,
+                max_words=_SUMMARY_WORDS,
+                preserve_recent=_PRESERVE_RECENT,
+                label="summary",
+            )
+        elif tier == 2:
+            _compress_tool_results(working, keep_recent_tools=max(2, _PRESERVE_RECENT // 2))
+            working = await _compact_messages_llm(
+                model,
+                working,
+                options,
+                max_words=_SUMMARY_WORDS_AGGRESSIVE,
+                preserve_recent=max(2, _PRESERVE_RECENT // 2),
+                label="compact",
+            )
+        else:
+            _compress_tool_results(working, keep_recent_tools=1)
+            _drop_middle_with_summary(working, budget)
+            working = _emergency_strip_messages(working)
+
+        after = _estimate_messages_tokens(working)
+        logger.warning(
+            "context %s tier %d: ~%d -> ~%d tok (budget %d)",
+            reason,
+            tier_used,
+            before,
+            after,
+            budget,
+        )
+
+    return working, tier_used
 
 
 async def _compact_messages(
@@ -768,34 +930,9 @@ async def _compact_messages(
     messages: list[dict[str, Any]],
     options: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
-    """Heuristic shrink, then LLM summary + keep recent tail."""
-    _heuristic_compress_messages(messages)
-    if _estimate_messages_tokens(messages) <= _max_prompt_tokens():
-        return messages
-
-    system_msgs = [m for m in messages if m.get("role") in ("system", "developer")]
-    tail = messages[-_PRESERVE_RECENT:]
-    middle = messages[len(system_msgs) : len(messages) - len(tail)]
-    if not middle:
-        return messages
-
-    summary = await _summarize_transcript(model, middle, options)
-    compacted: list[dict[str, Any]] = []
-    compacted.extend(system_msgs)
-    compacted.append(
-        {
-            "role": "user",
-            "content": f"[AIDEN-SESSION-SUMMARY]\n{summary}\n\nContinue the task from here.",
-        }
-    )
-    compacted.extend(tail)
-    logger.info(
-        "compacted context: %d -> %d msgs, ~%d tok",
-        len(messages),
-        len(compacted),
-        _estimate_messages_tokens(compacted),
-    )
-    return compacted
+    """Run full compaction cascade (heuristic → summary → aggressive → emergency)."""
+    fitted, _ = await _ensure_context_fits(model, messages, options, reason="compact")
+    return fitted
 
 
 def _is_context_overflow_error(exc: BaseException) -> bool:
@@ -815,25 +952,39 @@ async def _chat_completion_safe(
     *,
     tools: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], str, list[Any] | None]:
-    """Chat with automatic compress + one retry on context overflow."""
-    working = [dict(m) for m in messages]
-    _heuristic_compress_messages(working)
+    """Chat with proactive multi-tier compaction and overflow retries."""
+    fitted, tier_used = await _ensure_context_fits(model, messages, options, reason="pre-call")
+    messages[:] = fitted
 
-    payload = _apply_generation_controls({"model": model, "messages": working}, options=options)
-    _apply_chat_defaults(payload)
-    if tools:
-        payload["tools"] = tools
-        payload["tool_choice"] = "auto"
-
-    try:
-        return await _chat_completion(payload)
-    except httpx.HTTPStatusError as e:
-        if not _is_context_overflow_error(e):
-            raise
-        logger.warning("context overflow, compacting and retrying")
-        compacted = await _compact_messages(model, working, options)
-        payload["messages"] = compacted
-        return await _chat_completion(payload)
+    for attempt in range(3):
+        payload = _apply_generation_controls({"model": model, "messages": messages}, options=options)
+        _apply_chat_defaults(payload)
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        try:
+            return await _chat_completion(payload)
+        except httpx.HTTPStatusError as e:
+            if not _is_context_overflow_error(e):
+                raise
+            next_tier = min(tier_used + 1, _COMPACT_MAX_TIERS - 1)
+            if next_tier >= _COMPACT_MAX_TIERS - 1 and attempt >= 2:
+                raise
+            logger.warning(
+                "context overflow attempt %d, escalating from tier %d -> %d",
+                attempt + 1,
+                tier_used,
+                next_tier,
+            )
+            fitted, tier_used = await _ensure_context_fits(
+                model,
+                messages,
+                options,
+                reason="overflow-retry",
+                start_tier=next_tier,
+            )
+            messages[:] = fitted
+    raise RuntimeError("chat completion failed without response")
 
 
 def _session_path(session_id: str) -> Path:
@@ -893,15 +1044,30 @@ def _resolve_workspace_path(path: str, *, must_exist: bool = False) -> Path:
     return p
 
 
+def _resolve_existing_file(path: str) -> tuple[Path, Path, bool]:
+    """Return (workspace_root, file_path, auto_discovered)."""
+    root = _ws()
+    try:
+        p = _resolve_workspace_path(path, must_exist=False)
+    except ValueError as exc:
+        raise FileNotFoundError(str(exc)) from exc
+    if p.is_file():
+        return root, p.resolve(), False
+    found = find_file_under_mount(path)
+    if found is not None:
+        return found[0], found[1], True
+    raise FileNotFoundError(_path_not_found_message(path, p))
+
+
 def _path_not_found_message(requested: str, resolved: Path) -> str:
     name = Path(requested).name
     similar: list[str] = []
     if name:
         try:
-            for hit in _ws().rglob(name):
+            for hit in MOUNT_CONTAINER.rglob(name):
                 if hit.is_file():
-                    similar.append(hit.relative_to(_ws()).as_posix())
-                if len(similar) >= 8:
+                    similar.append(hit.relative_to(MOUNT_CONTAINER).as_posix())
+                if len(similar) >= 12:
                     break
         except OSError:
             pass
@@ -909,8 +1075,9 @@ def _path_not_found_message(requested: str, resolved: Path) -> str:
         f"Not found: {requested}",
         f"Resolved to: {resolved}",
         f"MCP workspace_root: {_ws()}",
-        "Open the project in VS Code/Continue (MCP roots) and ensure Docker mount includes it "
-        "(AIDEN_MCP_WORKSPACE_HOST parent folder, e.g. vibe-coding).",
+        f"mount_container: {MOUNT_CONTAINER}",
+        "Searched full Docker mount. If Continue rejects before MCP: file must exist in your "
+        "VS Code workspace on disk (check spelling/case). Widen mount: AIDEN_MCP_WORKSPACE_HOST=..",
     ]
     if similar:
         lines.append("Similar filenames in workspace:")
@@ -1229,24 +1396,19 @@ async def _agent_loop(
     """Multi-turn tool loop: LLM → execute tools → feed results → repeat."""
     tool_defs = _tools_for_chat_payload()
     transcript: list[str] = []
-    compacted_once = False
 
     for step in range(1, max_steps + 1):
-        _heuristic_compress_messages(messages)
+        fitted, tier = await _ensure_context_fits(model, messages, options, reason=f"agent-step-{step}")
+        if tier > 0:
+            messages[:] = fitted
+            transcript.append(f"[context compacted tier {tier} before step {step}]")
 
         try:
             msg, content, tool_calls = await _chat_completion_safe(
                 model, messages, options, tools=tool_defs or None
             )
         except httpx.HTTPError as e:
-            if not compacted_once and _is_context_overflow_error(e):
-                messages[:] = await _compact_messages(model, messages, options)
-                compacted_once = True
-                msg, content, tool_calls = await _chat_completion_safe(
-                    model, messages, options, tools=tool_defs or None
-                )
-            else:
-                return f"Agent stopped at step {step}: {e}\n\n" + "\n".join(transcript)
+            return f"Agent stopped at step {step}: {e}\n\n" + "\n".join(transcript)
 
         tool_calls = _normalize_tool_calls(tool_calls) if tool_calls else None
         if not tool_calls and content.strip():
@@ -1721,50 +1883,50 @@ async def _read_file_impl(
     max_lines: int = 0,
 ) -> str:
     try:
-        p = _resolve_workspace_path(path, must_exist=True)
+        wr, p, discovered = _resolve_existing_file(path)
     except FileNotFoundError as e:
         return f"Error: {e}"
-    if p.is_dir():
-        return f"Error: {p} is a directory, not a file"
+    async with activate_workspace(wr):
+        if p.is_dir():
+            return f"Error: {p} is a directory, not a file"
 
-    try:
-        raw = p.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return f"Error: {path} is not UTF-8 text; use grep_search or run_command"
+        try:
+            raw = p.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            return f"Error: {path} is not UTF-8 text; use grep_search or run_command"
 
-    lines = raw.splitlines()
-    total = len(lines)
-    if total == 0:
-        return "(empty file)"
+        lines = raw.splitlines()
+        total = len(lines)
+        if total == 0:
+            return "(empty file)"
 
-    start_line = max(1, start_line)
-    max_lines = max_lines if max_lines > 0 else _READ_MAX_LINES
-    if end_line <= 0:
-        end_line = min(total, start_line + max_lines - 1)
-        # Shrink range until chunk fits char budget (Continue counts ~chars/4 tokens)
-        while end_line >= start_line:
-            chunk = "\n".join(lines[start_line - 1 : end_line])
-            if len(chunk) <= _READ_MAX_CHARS:
-                break
-            end_line -= max(1, (end_line - start_line + 1) // 10)
-    else:
-        end_line = min(total, max(start_line, end_line))
+        start_line = max(1, start_line)
+        max_lines = max_lines if max_lines > 0 else _READ_MAX_LINES
+        if end_line <= 0:
+            end_line = min(total, start_line + max_lines - 1)
+            while end_line >= start_line:
+                chunk = "\n".join(lines[start_line - 1 : end_line])
+                if len(chunk) <= _READ_MAX_CHARS:
+                    break
+                end_line -= max(1, (end_line - start_line + 1) // 10)
+        else:
+            end_line = min(total, max(start_line, end_line))
 
-    selected = lines[start_line - 1 : end_line]
-    body = "\n".join(selected)
-    est = _estimate_text_tokens(body)
-    rel = p.relative_to(_ws()).as_posix()
-    header = f"# {rel} lines {start_line}-{end_line} of {total} (~{est} tokens)\n"
-    if start_line > 1 or end_line < total:
-        header += (
-            f"# More content: read_file path={path!r} start_line={end_line + 1} "
-            f"end_line={min(total, end_line + max_lines)}\n"
-        )
-    elif _estimate_text_tokens(raw) > _estimate_text_tokens(body) + 200:
-        header += (
-            f"# File was larger than read budget; use start_line/end_line or grep_search.\n"
-        )
-    return header + body
+        selected = lines[start_line - 1 : end_line]
+        body = "\n".join(selected)
+        est = _estimate_text_tokens(body)
+        rel = p.relative_to(_ws()).as_posix()
+        header = f"# {rel} lines {start_line}-{end_line} of {total} (~{est} tokens)\n"
+        if discovered:
+            header = f"# auto-located under mount: {wr}\n" + header
+        if start_line > 1 or end_line < total:
+            header += (
+                f"# More content: read_file path={path!r} start_line={end_line + 1} "
+                f"end_line={min(total, end_line + max_lines)}\n"
+            )
+        elif _estimate_text_tokens(raw) > _estimate_text_tokens(body) + 200:
+            header += "# File was larger than read budget; use start_line/end_line or grep_search.\n"
+        return header + body
 
 
 async def _write_file_impl(path: str, content: str) -> str:
