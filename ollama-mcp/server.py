@@ -1060,30 +1060,25 @@ def _resolve_existing_file(path: str) -> tuple[Path, Path, bool]:
 
 
 def _path_not_found_message(requested: str, resolved: Path) -> str:
+    from workspace_roots import find_similar_filenames
+
     name = Path(requested).name
-    similar: list[str] = []
-    if name:
-        try:
-            for hit in MOUNT_CONTAINER.rglob(name):
-                if hit.is_file():
-                    similar.append(hit.relative_to(MOUNT_CONTAINER).as_posix())
-                if len(similar) >= 12:
-                    break
-        except OSError:
-            pass
+    similar = find_similar_filenames(name) if name else []
     lines = [
         f"Not found: {requested}",
         f"Resolved to: {resolved}",
         f"MCP workspace_root: {_ws()}",
         f"mount_container: {MOUNT_CONTAINER}",
-        "Searched full Docker mount. If Continue rejects before MCP: file must exist in your "
-        "VS Code workspace on disk (check spelling/case). Widen mount: AIDEN_MCP_WORKSPACE_HOST=..",
+        "Searched Docker mount (AI.DEN, House-App, …). Path is wrong or file was never created.",
+        "If VS Code workspace is a subfolder, use paths relative to that folder OR prefix the project "
+        "(e.g. House-App/frontend/src/components/...).",
+        "Use glob_files pattern=\"**/contact*\" or workspace_info before read_file.",
     ]
     if similar:
-        lines.append("Similar filenames in workspace:")
+        lines.append("Similar filenames under mount:")
         lines.extend(f"  - {s}" for s in similar)
     elif name:
-        lines.append(f"Try: glob_files pattern=\"**/{name}\"")
+        lines.append(f"No file named {name!r} under mount. Try: glob_files pattern=\"**/{name}\"")
     return "\n".join(lines)
 
 

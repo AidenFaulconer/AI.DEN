@@ -22,17 +22,38 @@ Profiles for **Qwen3.6-27B-MTP** via `llamacpp` + **model-router** + **MCP**.
 | `-np 1` | (entrypoint) | MTP requires single parallel slot |
 | `LLAMACPP_GGUF` | `*-MTP-*.gguf` | Non-MTP files cannot use MTP |
 
+## Less CPU usage (RTX 3050 Ti / 4GB)
+
+Most CPU load is **not** the router — it is **llama.cpp running most of the 27B on CPU** when `LLAMACPP_FIT_TARGET` is low (512 MiB GPU budget).
+
+| Lever | Setting | Effect |
+|-------|---------|--------|
+| **Smaller prompts** | `AIDEN_MAX_PROMPT_TOKENS=6144` | Biggest win; router **rejects** oversize prompts (413) instead of a 5‑min hang |
+| **More GPU layers** | `LLAMACPP_FIT_TARGET=768` | Less CPU; if OOM, drop to `512` |
+| **Fewer CPU threads** | `LLAMACPP_THREADS=6` | Lower CPU spikes (don’t use all 14 cores) |
+| **Smaller context** | `LLAMACPP_CTX_SIZE=12288` | Less KV / prefill work |
+| **Less MTP work** | `LLAMACPP_SPEC_DRAFT_N_MAX=2` or `LLAMACPP_SPEC_MODE=none` | `none` = lowest CPU, slower tokens |
+| **ctags** | `CTAGS_INTERVAL_SEC=600` | Less background indexing CPU |
+| **Continue** | `@repo-map` off / subfolder only | Stops 12k-token prefills |
+
+Apply: `docker compose up -d --force-recreate llamacpp model-router`
+
+For **minimum CPU**, use a smaller coder model (7B–14B) or cloud API — 27B Q4 on 4GB will always be CPU-heavy.
+
 ## 4 GB VRAM profile (current `.env`)
 
 ```env
-LLAMACPP_FIT_TARGET=512
-LLAMACPP_CTX_SIZE=16384
-LLAMACPP_THREADS=14
+LLAMACPP_FIT_TARGET=768
+LLAMACPP_CTX_SIZE=12288
+LLAMACPP_THREADS=6
+LLAMACPP_SPEC_MODE=none
+AIDEN_MAX_PROMPT_TOKENS=6144
 PROMPT_PIPELINE=caveman
 OLLAMA_MCP_MAX_TOKENS=1536
 ```
 
-- **`LLAMACPP_FIT_TARGET=512`** — leaves headroom for Windows, display, and MTP draft KV (vs `1536` on 12 GB cards).
+- **`LLAMACPP_FIT_TARGET=768`** — more layers on GPU, less CPU (if OOM, drop to `512`).
+- **`LLAMACPP_SPEC_MODE=none`** — lowest decode CPU on 4GB; use `mtp` if you want faster tokens and can spare CPU.
 - **`PROMPT_PIPELINE=caveman`** — drops the extra claw system block (~1–2k tokens). Use `claw,caveman` for hard multi-file agent tasks.
 - **MCP `temperature=0.15`** — overrides server defaults for tool calls (accuracy over creativity).
 
@@ -61,11 +82,11 @@ Coding agents should stay **low temperature**; raise `LLAMACPP_TEMP` only for op
 
 | Variable | Role |
 |----------|------|
-| `AIDEN_MAX_PROMPT_TOKENS` | Hard cap on prompt size (7680 on 4GB) — avoids 9k+ full reprocess |
-| `AIDEN_CTX_RESERVE` | Tokens left for model reply (5120) |
+| `AIDEN_MAX_PROMPT_TOKENS` | Hard cap on prompt size (6144 on 4GB) — 413 if still too big after trim |
+| `AIDEN_CTX_RESERVE` | Tokens left for model reply (4096) |
 | `AIDEN_MAX_MSG_CHARS` | Per-message cap before router trim (6000) |
 | `AIDEN_TOOL_RESULT_MAX_CHARS` | Old tool output compression |
-| `LLAMACPP_UBATCH_SIZE` | Physical batch for prompt eval (256 on 4GB) |
+| `LLAMACPP_UBATCH_SIZE` | Physical batch for prompt eval (192 on 4GB low-CPU) |
 | `OLLAMA_MCP_COMPACT_THRESHOLD` | Summarize history earlier (0.72) |
 | `OLLAMA_MCP_PRESERVE_RECENT` | Turns kept verbatim (3) |
 | `OLLAMA_MCP_MAX_TOKENS` | Cap completion length per MCP step |

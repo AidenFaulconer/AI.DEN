@@ -19,7 +19,7 @@ models:
     defaultCompletionOptions:
       temperature: 0.15
       maxTokens: 1024
-      contextLength: 16384
+      contextLength: 12288
     requestOptions:
       timeout: 300000
     chatOptions:
@@ -44,7 +44,7 @@ models:
     defaultCompletionOptions:
       temperature: 0.2
       maxTokens: 1024
-      contextLength: 16384
+      contextLength: 12288
     requestOptions:
       timeout: 300000
 

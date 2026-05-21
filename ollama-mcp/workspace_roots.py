@@ -16,6 +16,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Skip heavy dirs when searching the mount (keeps read_file errors fast)
+_SKIP_DIR_NAMES = frozenset({
+    ".git",
+    "node_modules",
+    ".aiden",
+    "dist",
+    "build",
+    "__pycache__",
+    ".venv",
+    "vendor",
+    ".next",
+    "target",
+    "coverage",
+})
+
 # Container mount (Docker) or default when client does not send roots
 MOUNT_CONTAINER = Path(
     os.environ.get("OLLAMA_MCP_WORKSPACE", os.environ.get("OLLAMA_MCP_MOUNT_CONTAINER", "/workspace"))
@@ -200,6 +215,57 @@ def pick_workspace_for_relative_path(relative_path: str, mapped_roots: list[Path
     return min(hits, key=lambda r: len(str(r)))
 
 
+def find_similar_filenames(filename: str, *, max_hits: int = 12, max_depth: int = 10) -> list[str]:
+    """Bounded search for basename matches under /workspace (no full-mount rglob)."""
+    name = (filename or "").strip()
+    if not name or name in (".", ".."):
+        return []
+    hits: list[str] = []
+    try:
+        for child in sorted(MOUNT_CONTAINER.iterdir(), key=lambda p: p.name.lower()):
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            for root, dirnames, files in os.walk(child, topdown=True):
+                dirnames[:] = [
+                    d
+                    for d in dirnames
+                    if d not in _SKIP_DIR_NAMES and not d.startswith(".")
+                ]
+                depth = len(Path(root).relative_to(child).parts)
+                if depth > max_depth:
+                    dirnames.clear()
+                    continue
+                if name in files:
+                    hits.append(Path(root, name).relative_to(MOUNT_CONTAINER).as_posix())
+                    if len(hits) >= max_hits:
+                        return hits
+    except OSError as exc:
+        logger.debug("find_similar_filenames: %s", exc)
+    return hits
+
+
+def _pruned_rglob_by_name(root: Path, name: str, *, max_hits: int = 8) -> list[Path]:
+    """rglob(name) with node_modules etc. pruned."""
+    hits: list[Path] = []
+    try:
+        for hit in root.rglob(name):
+            if not hit.is_file():
+                continue
+            skip = False
+            for part in hit.relative_to(root).parts:
+                if part in _SKIP_DIR_NAMES:
+                    skip = True
+                    break
+            if skip:
+                continue
+            hits.append(hit.resolve())
+            if len(hits) >= max_hits:
+                break
+    except OSError:
+        pass
+    return hits
+
+
 def find_file_under_mount(requested: str) -> tuple[Path, Path] | None:
     """
     Locate a file anywhere under MOUNT_CONTAINER.
@@ -229,17 +295,15 @@ def find_file_under_mount(requested: str) -> tuple[Path, Path] | None:
         if cand.is_file():
             return child, cand.resolve()
 
-    # Suffix match (handles wrong active root)
+    # Suffix match (handles wrong active root) — pruned walk per top-level project
     matches: list[Path] = []
-    try:
-        for hit in MOUNT_CONTAINER.rglob(name):
-            if not hit.is_file():
-                continue
+    for child in sorted(MOUNT_CONTAINER.iterdir(), key=lambda p: p.name.lower()):
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        for hit in _pruned_rglob_by_name(child, name, max_hits=16):
             rel = hit.relative_to(MOUNT_CONTAINER).as_posix()
             if rel == suffix or rel.endswith("/" + suffix):
-                matches.append(hit.resolve())
-    except OSError:
-        pass
+                matches.append(hit)
 
     if len(matches) == 1:
         hit = matches[0]

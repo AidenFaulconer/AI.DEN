@@ -30,7 +30,12 @@ MCP follows the **VS Code / Continue workspace** via MCP `roots` (no script per 
 
 If paths fail: call MCP `workspace_info`, or widen the mount in AI.DEN `.env` and recreate `mcp-server` + `ctags-indexer`.
 
-If Continue says *"does not exist or is not accessible"* **before** MCP runs: the file is not on disk in your **opened VS Code folder** (typo, wrong repo root, or `Contact.jsx` vs `contact.jsx`). Open the app project as the workspace, not only AI.DEN.
+If `read_file` fails with *"does not exist or is not accessible"*:
+
+1. **File may not exist** — the model often guesses paths (e.g. `frontend/src/components/forms/contact.jsx`). There is **no** `contact.jsx` anywhere under `vibe-coding` today. Use MCP `glob_files` with `**/contact*` or `grep_search` first.
+2. **Wrong workspace root** — if VS Code is opened on **AI.DEN** only, paths must be like `House-App/frontend/src/components/ListingBrowserTab.jsx`, not bare `frontend/...` (that folder is not under AI.DEN).
+3. **Open the app repo** — File → Open Folder → `House-App` (or your real app), then paths are relative to that root: `frontend/src/components/...`.
+4. **Case** — `Contact.jsx` vs `contact.jsx` on Linux MCP.
 
 ## MCP tools (AI.DEN Ollama MCP on :5000)
 

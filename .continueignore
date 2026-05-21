@@ -1,0 +1,25 @@
+# Continue indexing + @repo-map respect this file (gitignore syntax).
+# node_modules and build outputs are the main token sinks.
+
+node_modules/
+**/node_modules/
+dist/
+build/
+out/
+.next/
+.nuxt/
+target/
+__pycache__/
+.venv/
+venv/
+.env
+*.gguf
+models/
+.aiden/
+.git/
+coverage/
+.pytest_cache/
+.mypy_cache/
+vendor/
+*.min.js
+*.min.css
