@@ -46,6 +46,10 @@ services:
   llamacpp:
     <<: *llm_mem
 
+  llamacpp-fast:
+    mem_limit: ${AIDEN_FAST_LLM_MEM_LIMIT:-14g}
+    memswap_limit: ${AIDEN_FAST_LLM_MEMSWAP_LIMIT:-14g}
+
   hermes-agent:
     <<: *hermes_mem
 

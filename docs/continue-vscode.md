@@ -56,7 +56,7 @@ MCP tools: `workspace_info`, `glob_files` with `**/contact.jsx`.
 1. Stack up: `start-aiden.bat`
 2. Point MCP at your project: `use-mcp-workspace.ps1` (if not editing AI.DEN itself)
 3. Sync config: `.\scripts\sync-continue-config.ps1` (writes `~/.continue/config.yaml` with **absolute paths**, not `file:///` — Continue on Windows doubles `C:\` with `file:///C:/...`)
-4. VS Code: **Reload Window** (or reload Continue), select **AI.DEN Coder**, open **Agent** panel
+4. VS Code: **Reload Window** (or reload Continue), select **AI.DEN Coder (quality)** or **AI.DEN Fast**, open **Agent** panel (same `:8765` — router auto-picks tier unless you set `model` explicitly; see [dual-model-routing.md](dual-model-routing.md))
 5. Enable MCP server **AI.DEN Ollama MCP** in Continue settings (verify `http://localhost:5000/health` returns 200 first)
 6. Rebuild MCP after updates: `docker compose up -d --build mcp-server`
 

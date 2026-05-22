@@ -6,7 +6,31 @@ version: 1.0.0
 schema: v1
 
 models:
-  - name: AI.DEN Coder (Qwen3.6 + pipeline)
+  - name: AI.DEN Fast (Qwen3.5-9B MTP, auto-routed)
+    provider: openai
+    model: Qwen3.5-9B-UD-Q4_K_XL.gguf
+    apiBase: http://localhost:8765/v1
+    apiKey: ollama
+    capabilities:
+      - tool_use
+    roles:
+      - chat
+      - edit
+      - apply
+      - summarize
+    defaultCompletionOptions:
+      temperature: 0.15
+      maxTokens: 512
+      contextLength: 16384
+    requestOptions:
+      timeout: 300000
+    chatOptions:
+      baseAgentSystemMessage: |
+        You are on AI.DEN **fast** tier (Qwen3.5-9B MTP). Same apiBase and caveman pipeline as the 27B coder.
+        For hard refactors, security, or multi-file agent work, switch to **AI.DEN Coder (quality)** or set header X-AIDEN-Model-Tier: quality.
+        File paths: glob_files before read_file; MCP on :5000. Prefer @tree / subfolder @repo-map on 4GB.
+
+  - name: AI.DEN Coder (Qwen3.6 quality + pipeline)
     provider: openai
     model: Qwen3.6-27B-MTP-UD-Q4_K_XL.gguf
     apiBase: http://localhost:8765/v1
@@ -29,6 +53,7 @@ models:
         You are a coding agent on AI.DEN (local Qwen + MCP on :5000).
 
         API: Use this model's apiBase (http://localhost:8765/v1) — model-router + caveman pipeline.
+        Default model omits `model` → router auto-picks fast (9B) vs this 27B from task complexity.
         Do not use bare llama.cpp :8081 (no pipeline, no prompt cap).
 
         File paths (MCP — critical):

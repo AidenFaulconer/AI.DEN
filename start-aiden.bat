@@ -70,6 +70,7 @@ set "LLAMA_BACKEND=llamacpp"
 set "COMPOSE_EXTRA="
 set "AIDEN_USE_RESOURCE_LIMITS=1"
 set "LLAMACPP_GGUF=Qwen3.6-27B-MTP-UD-Q4_K_XL.gguf"
+set "AIDEN_FAST_ENABLED=0"
 if exist ".env" (
     for /f "usebackq eol=# tokens=1,* delims==" %%a in (".env") do (
         if "%%a"=="CODER_MODEL" set "CODER=%%b"
@@ -88,6 +89,17 @@ if exist ".env" (
         if "%%a"=="LLAMA_BACKEND" set "LLAMA_BACKEND=%%b"
         if "%%a"=="AIDEN_USE_RESOURCE_LIMITS" set "AIDEN_USE_RESOURCE_LIMITS=%%b"
         if "%%a"=="LLAMACPP_GGUF" set "LLAMACPP_GGUF=%%b"
+        if "%%a"=="AIDEN_FAST_ENABLED" set "AIDEN_FAST_ENABLED=%%b"
+    )
+)
+if /i "%AIDEN_FAST_ENABLED%"=="1" (
+    echo %COMPOSE_PROFILES% | findstr /i "fast" >nul 2>&1
+    if errorlevel 1 (
+        if defined COMPOSE_PROFILES (
+            set "COMPOSE_PROFILES=%COMPOSE_PROFILES%,fast"
+        ) else (
+            set "COMPOSE_PROFILES=fast"
+        )
     )
 )
 if /i "%AIDEN_USE_RESOURCE_LIMITS%"=="1" set "COMPOSE_EXTRA=-f docker-compose.yml -f docker-compose.resources.yml"
@@ -274,7 +286,8 @@ echo     MCP      http://127.0.0.1:!MCP_PORT!/mcp
 echo     Pipeline http://127.0.0.1:!CODER_PORT!/_aiden/pipeline
 echo.
 echo   !B!Endpoints!N!
-echo   Coder   http://localhost:!CODER_PORT!     !CODER!
+echo   Coder   http://localhost:!CODER_PORT!     !CODER!  (auto fast/quality)
+echo   Fast    Qwen3.5-9B MTP  profile=fast  docs\dual-model-routing.md
 echo   Llama   http://localhost:!LLAMA_PORT!     !LLAMA!
 echo   Vision  http://localhost:!VISION_PORT!     !VISION!
 echo   WebUI   http://localhost:!WEBUI_PORT!

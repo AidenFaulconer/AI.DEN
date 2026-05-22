@@ -55,7 +55,7 @@ Most CPU load is **not** the router — it is **llama.cpp running most of the 27
 
 Apply: `docker compose up -d --force-recreate llamacpp model-router`
 
-For **minimum CPU**, use a smaller coder model (7B–14B) or cloud API — 27B Q4 on 4GB will always be CPU-heavy.
+For **minimum CPU**, enable **dual MTP routing** ([dual-model-routing.md](dual-model-routing.md)): Qwen3.5-9B for simple tasks, 27B for agent/tools. Or use cloud API — 27B Q4 on 4GB will always be CPU-heavy when selected.
 
 ## 4 GB VRAM profile — speed (default after regression fix)
 

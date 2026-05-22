@@ -2,6 +2,10 @@
 
 The **llamacpp** service loads models from this folder. Speculative decoding mode is set in `.env` as `LLAMACPP_SPEC_MODE` (see **`docs/speculative-decoding.md`**).
 
+## Dual MTP (fast + quality)
+
+See **`docs/dual-model-routing.md`**. Fast tier: `.\scripts\download-fast-mtp.ps1` then `COMPOSE_PROFILES=fast`.
+
 ## Mode: MTP (default — one file)
 
 Multi-Token Prediction (MTP) GGUF — built-in draft heads, best fit for **64 GB RAM / 4 GB VRAM** laptops.

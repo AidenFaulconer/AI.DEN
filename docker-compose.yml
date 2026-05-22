@@ -92,6 +92,48 @@ services:
       retries: 40
       start_period: 600s
 
+  # ── Fast MTP coder (Qwen3.5-9B) — auto-routed for simple tasks on :8765 ───
+  llamacpp-fast:
+    image: ${LLAMACPP_IMAGE:-havenoammo/llama:cuda13-server}
+    container_name: llamacpp-fast
+    profiles: ["fast"]
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    volumes:
+      - ${LLAMACPP_MODELS_DIR:-./models}:/models:ro
+      - ./scripts/llamacpp-entrypoint.sh:/entrypoint.sh:ro
+    environment:
+      - LLAMACPP_GGUF=${LLAMACPP_FAST_GGUF:-Qwen3.5-9B-UD-Q4_K_XL.gguf}
+      - LLAMACPP_SPEC_MODE=${LLAMACPP_FAST_SPEC_MODE:-mtp}
+      - LLAMACPP_CTX_SIZE=${LLAMACPP_FAST_CTX_SIZE:-16384}
+      - LLAMACPP_THREADS=${LLAMACPP_FAST_THREADS:-10}
+      - LLAMACPP_NGL=${LLAMACPP_FAST_NGL:--1}
+      - LLAMACPP_CACHE_K=${LLAMACPP_CACHE_K:-q8_0}
+      - LLAMACPP_CACHE_V=${LLAMACPP_CACHE_V:-q8_0}
+      - LLAMACPP_SPEC_DRAFT_N_MAX=${LLAMACPP_FAST_SPEC_DRAFT_N_MAX:-3}
+      - LLAMACPP_FIT=${LLAMACPP_FIT:-on}
+      - LLAMACPP_FIT_TARGET=${LLAMACPP_FAST_FIT_TARGET:-2048}
+      - LLAMACPP_TEMP=${LLAMACPP_TEMP:-0.45}
+      - LLAMACPP_TOP_P=${LLAMACPP_TOP_P:-0.95}
+      - LLAMACPP_TOP_K=${LLAMACPP_TOP_K:-20}
+      - LLAMACPP_MIN_P=${LLAMACPP_MIN_P:-0.0}
+      - LLAMACPP_REPEAT_PENALTY=${LLAMACPP_REPEAT_PENALTY:-1.0}
+      - LLAMACPP_BATCH_SIZE=${LLAMACPP_FAST_BATCH_SIZE:-512}
+      - LLAMACPP_UBATCH_SIZE=${LLAMACPP_FAST_UBATCH_SIZE:-256}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://127.0.0.1:8080/v1/models | grep -q '\"data\"' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 300s
+
   # ── Hermes Agent gateway — optional: COMPOSE_PROFILES=hermes ───────────────
   hermes-agent:
     profiles: ["hermes"]
@@ -141,8 +183,15 @@ services:
       - ./proxy/prompt-pipeline.json:/usr/local/openresty/nginx/conf/prompt-pipeline.json
     environment:
       - CODER_MODEL=${CODER_MODEL:-qwen2.5-coder:7b}
+      - CODER_FAST_MODEL=${CODER_FAST_MODEL:-}
       - LLAMA_MODEL=${LLAMA_MODEL:-llama3.1:8b}
+      - LLAMA_FAST_MODEL=${LLAMA_FAST_MODEL:-}
       - VISION_MODEL=${VISION_MODEL:-gemma4}
+      - AIDEN_MODEL_ROUTING=${AIDEN_MODEL_ROUTING:-auto}
+      - AIDEN_FAST_ENABLED=${AIDEN_FAST_ENABLED:-0}
+      - AIDEN_FAST_MAX_PROMPT_TOKENS=${AIDEN_FAST_MAX_PROMPT_TOKENS:-2048}
+      - AIDEN_FAST_MAX_MESSAGES=${AIDEN_FAST_MAX_MESSAGES:-10}
+      - AIDEN_FAST_MAX_COMPLETION_TOKENS=${AIDEN_FAST_MAX_COMPLETION_TOKENS:-512}
       - PROMPT_PIPELINE=${PROMPT_PIPELINE:-claw,caveman}
       - AIDEN_ADMIN_TOKEN=${AIDEN_ADMIN_TOKEN:-}
       - INFERENCE_BACKEND=${INFERENCE_BACKEND:-llamacpp}

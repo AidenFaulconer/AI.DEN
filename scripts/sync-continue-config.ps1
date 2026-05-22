@@ -26,6 +26,7 @@ function To-ContinuePath([string]$path) {
 }
 
 $coderModel = Get-EnvValue "CODER_MODEL" "Qwen3.6-27B-MTP-UD-Q4_K_XL.gguf"
+$fastModel = Get-EnvValue "CODER_FAST_MODEL" "Qwen3.5-9B-UD-Q4_K_XL.gguf"
 $llamaModel = Get-EnvValue "LLAMA_MODEL" $coderModel
 $coderPort = Get-EnvValue "CODER_PORT" "8765"
 $llamaPort = Get-EnvValue "LLAMA_PORT" "8766"
@@ -52,6 +53,8 @@ if (-not (Test-Path $continueDir)) {
 }
 
 $content = Get-Content $template -Raw
+$content = $content -replace 'model: Qwen3\.5-9B-UD-Q4_K_XL\.gguf', "model: $fastModel"
+$content = $content -replace '(name: AI\.DEN Coder \(Qwen3\.6 quality[^\r\n]*\r?\n(?:[^\r\n]*\r?\n)*?    model: )Qwen3\.6-27B-MTP-UD-Q4_K_XL\.gguf', "`${1}$coderModel"
 $content = $content -replace 'model: Qwen3\.6-27B-MTP-UD-Q4_K_XL\.gguf', "model: $coderModel"
 $content = $content -replace '(apiBase: http://localhost:)8765(/v1)', "`${1}${coderPort}`${2}"
 $content = $content -replace '(name: AI\.DEN General[^\r\n]*\r?\n(?:[^\r\n]*\r?\n)*?    model: )Qwen3\.6-27B-MTP-UD-Q4_K_XL\.gguf', "`${1}$llamaModel"
@@ -87,7 +90,8 @@ if ((Test-Path $ignoreTemplate) -and -not (Test-Path $ignoreDest)) {
 }
 
 Write-Host "Wrote Continue config: $dest"
-Write-Host "  Coder: http://localhost:${coderPort}/v1  model=$coderModel  ctx=$ctxSize"
+Write-Host "  Coder: http://localhost:${coderPort}/v1  quality=$coderModel  fast=$fastModel  ctx=$ctxSize"
+Write-Host "  Routing: $(Get-EnvValue 'AIDEN_MODEL_ROUTING' 'auto')  (see docs/dual-model-routing.md)"
 Write-Host "  MCP:   http://localhost:${mcpPort}/mcp"
 Write-Host "  @repo-map includeSignatures=$repoSigs  (FIT_TARGET=$fitTarget)"
 Write-Host '  Agent mode: glob_files before read_file; @tree or @repo-map subfolder only - docs/continue-repo-context.md'

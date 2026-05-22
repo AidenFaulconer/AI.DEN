@@ -117,7 +117,7 @@ Starting via **`start-aiden.bat`** / **`start-app.bat`** opens an extra **`AIDEN
 
 [Nous Hermes Agent](https://hermes-agent.nousresearch.com/) runs as an autonomous gateway; **llama.cpp** inference uses speculative decoding when enabled.
 
-**Speculative decoding** (MTP, separate draft model, n-gram): see **[docs/speculative-decoding.md](docs/speculative-decoding.md)**. Default on your laptop: **`LLAMACPP_SPEC_MODE=mtp`** (single Qwen3.6-MTP GGUF). For **3–4B draft + 27B/70B target**, set `LLAMACPP_SPEC_MODE=draft` (70B needs a high-RAM/VRAM machine).
+**Speculative decoding** (MTP, separate draft model, n-gram): see **[docs/speculative-decoding.md](docs/speculative-decoding.md)**. Default on your laptop: **`LLAMACPP_SPEC_MODE=mtp`** (single Qwen3.6-MTP GGUF). **Dual fast + quality MTP** (Qwen3.5-9B auto-routed vs Qwen3.6-27B): **[docs/dual-model-routing.md](docs/dual-model-routing.md)**. For **3–4B draft + 27B/70B target**, set `LLAMACPP_SPEC_MODE=draft` (70B needs a high-RAM/VRAM machine).
 
 Default MTP build: [havenoammo/llama](https://huggingface.co/havenoammo/Qwen3.6-27B-MTP-UD-GGUF) with `--spec-type draft-mtp`.
 
