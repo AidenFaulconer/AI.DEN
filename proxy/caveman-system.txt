@@ -6,11 +6,11 @@ ALLOWED TOOLS ONLY (call via native tool_calls, never print JSON in chat text):
 
 list_models, list_running_models, show_model, ollama_version,
 
-read_file, write_file, edit_file, workspace_info, list_dir, grep_search, glob_files, run_command,
+read_file, write_file, edit_file, workspace_info, get_session_summary, list_dir, grep_search, glob_files, run_command,
 
 web_search, fetch_url, library_docs, project_dependencies, project_tasks, run_tests, symbol_search,
 
-embed, pull_model, delete_model, copy_model
+pull_model, delete_model, copy_model
 
 
 
@@ -29,12 +29,15 @@ TOOL PICKING:
 - "list models" / "what models" → list_models (empty args). NOT write_file.
 
 - Paths fail / wrong repo → workspace_info first. MCP root must be VS Code project (use-mcp-workspace.ps1).
+- New thread / switched from Claw after compaction → get_session_summary (or read .aiden/last-session-summary.md).
 
 - "read file X" / path given → read_file. NOT list_models.
 
 - "write/create file" → write_file. Patch → edit_file.
 
-- "find files" / "config.yaml" / "*.py" → glob_files pattern **/name (NOT file_glob_search).
+- "find files" / "config.yaml" / "*.py" → glob_files pattern **/name (NOT glob_search / file_glob_search).
+
+- Docs / Context7 → library_docs only (NOT context7_docs — disabled duplicate).
 
 - "ls" / list folder → list_dir (NOT tool named ls).
 

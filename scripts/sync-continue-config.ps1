@@ -96,4 +96,20 @@ Write-Host "  MCP:   http://localhost:${mcpPort}/mcp"
 Write-Host "  @repo-map includeSignatures=$repoSigs  (FIT_TARGET=$fitTarget)"
 Write-Host '  Agent mode: glob_files before read_file; @tree or @repo-map subfolder only - docs/continue-repo-context.md'
 Write-Host '  Claw terminal: launch-claw.bat  |  docs/claw-with-continue.md'
+
+$clawTemplate = Join-Path $repoRoot "continue\claw.settings.example.json"
+$clawDest = Join-Path $env:USERPROFILE ".claw\settings.json"
+if (Test-Path $clawTemplate) {
+    $clawDir = Split-Path $clawDest -Parent
+    if (-not (Test-Path $clawDir)) { New-Item -ItemType Directory -Path $clawDir | Out-Null }
+    $clawJson = Get-Content $clawTemplate -Raw
+    $clawJson = $clawJson -replace 'http://127.0.0.1:8765', "http://127.0.0.1:${coderPort}"
+    $clawJson = $clawJson -replace 'http://127.0.0.1:5000', "http://127.0.0.1:${mcpPort}"
+    $clawJson = $clawJson -replace 'openai/Qwen3\.6-27B-MTP-UD-Q4_K_XL\.gguf', "openai/$coderModel"
+    Set-Content -Path $clawDest -Value $clawJson -Encoding UTF8
+    Write-Host "  Claw MCP settings: $clawDest (duplicate builtins denied - docs/tool-policy.md)"
+}
+
+& (Join-Path $PSScriptRoot "sync-claude-md.ps1")
+
 Write-Host "Reload Continue in VS Code after stack is up."

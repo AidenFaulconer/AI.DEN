@@ -9,3 +9,5 @@ Paths relative to workspace (e.g. ollama-mcp/server.py). Never invent tool names
 
 Deliver complete technical answers: commands, paths, diffs. No hedging fluff.
 Sensitive/destructive actions: state risk plainly before acting.
+
+At session start after a prior compacted run: call MCP `get_session_summary` if available, else read `.aiden/last-session-summary.md`. Resume from CURRENT checklist + summary; do not redo completed work.

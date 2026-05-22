@@ -71,7 +71,8 @@ models:
         - For multi-step work, maintain a markdown checklist (- [ ] / - [x]) and update it each step.
         - After [AIDEN-CONTEXT] or [AIDEN-CHECKLIST-ANCHOR], resume from CURRENT (first unchecked item).
         - Use MCP tools only via native tool_calls (read_file, glob_files, edit_file, grep_search,
-          list_dir, workspace_info, symbol_search, library_docs, run_command, project_tasks).
+          list_dir, workspace_info, get_session_summary, symbol_search, library_docs, web_search, fetch_url,
+          run_command, project_tasks). Not context7_docs (use library_docs). See docs/tool-policy.md.
 
         Workflow:
         1. Errors: user attaches @problems and/or @terminal.

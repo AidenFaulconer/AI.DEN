@@ -4,6 +4,19 @@
     "OPENAI_API_KEY": "ollama",
     "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1"
   },
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "deny": [
+      "read_file",
+      "write_file",
+      "edit_file",
+      "glob_search",
+      "grep_search",
+      "WebFetch",
+      "WebSearch",
+      "LSP"
+    ]
+  },
   "mcpServers": {
     "aiden-ollama": {
       "type": "http",

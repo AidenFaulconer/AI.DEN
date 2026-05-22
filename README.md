@@ -278,18 +278,19 @@ Continue uses the same **OpenAI-compatible** router as Cursor, with optional **M
 .\scripts\sync-continue-config.ps1
 ```
 
-This writes `%USERPROFILE%\.continue\config.yaml` (on your machine: `C:\Users\aidenleefaulconer\.continue\config.yaml`).
+This writes `%USERPROFILE%\.continue\config.yaml`, syncs Claw MCP settings, and regenerates repo **`CLAUDE.md`** from `continue/rules.md`.
 
 3. In VS Code, install the **Continue** extension and reload the window.
-4. In Continue, pick **AI.DEN Coder (Qwen3.6 + pipeline)** as the chat model.
+4. In Continue, pick **AI.DEN Coder (quality)** or **AI.DEN Fast** (same `:8765`; router [auto-picks tier](docs/dual-model-routing.md)). Use **Agent** mode with MCP enabled. For the 9B fast backend, ensure `COMPOSE_PROFILES` includes **`fast`** in `.env`.
 
 ### What is configured
 
 | Continue model | API base | Notes |
 |----------------|----------|--------|
-| **AI.DEN Coder** | `http://localhost:8765/v1` | claw + caveman pipeline, `CODER_MODEL` |
+| **AI.DEN Coder (quality)** | `http://localhost:8765/v1` | 27B MTP + pipeline |
+| **AI.DEN Fast** | `http://localhost:8765/v1` | 9B MTP; explicit model name |
 | **AI.DEN General** | `http://localhost:8766/v1` | same pipeline, `LLAMA_MODEL` |
-| **MCP** | `http://localhost:5000/mcp` | streamable-http — `list_models`, file tools, etc. |
+| **MCP** | `http://localhost:5000/mcp` | file/shell/docs tools — see [docs/tool-policy.md](docs/tool-policy.md) |
 
 - **`apiKey`**: `ollama` (any non-empty string; router does not validate)
 - **`model`**: must match `GET http://localhost:8765/v1/models` (GGUF filename for llama.cpp)
@@ -299,6 +300,8 @@ This writes `%USERPROFILE%\.continue\config.yaml` (on your machine: `C:\Users\ai
 ### After changing `.env`
 
 Re-run `.\scripts\sync-continue-config.ps1` and reload Continue.
+
+**Model eval:** `python scripts/benchmark-model-eval.py --quick` — see [docs/benchmark-results.md](docs/benchmark-results.md).
 
 Template lives in-repo: `continue/config.yaml` and `continue/rules.md`.
 

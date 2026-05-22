@@ -68,6 +68,8 @@ set "ANTHROPIC_AUTH_TOKEN="
 set "CLAW_USE_DOCKER=0"
 set "CLAW_EXE="
 if defined CLAW_BIN set "CLAW_EXE=!CLAW_BIN!"
+if not defined CLAW_EXE if exist "%~dp0claw-code-local\rust\target\release\claw.exe" set "CLAW_EXE=%~dp0claw-code-local\rust\target\release\claw.exe"
+if not defined CLAW_EXE if exist "%~dp0claw-code-local\rust\target\debug\claw.exe" set "CLAW_EXE=%~dp0claw-code-local\rust\target\debug\claw.exe"
 if not defined CLAW_EXE if exist "%~dp0claw-code\rust\target\release\claw.exe" set "CLAW_EXE=%~dp0claw-code\rust\target\release\claw.exe"
 if not defined CLAW_EXE if exist "%~dp0claw-code\rust\target\debug\claw.exe" set "CLAW_EXE=%~dp0claw-code\rust\target\debug\claw.exe"
 if not defined CLAW_EXE (
@@ -82,7 +84,7 @@ if not defined CLAW_EXE (
     set "CLAW_USE_DOCKER=1"
     echo [!] claw.exe not found on PATH — using Docker image aiden-clawcode:local
     echo     Rebuild image: docker compose --profile claw build clawcode
-    echo     Or build natively: cd claw-code\rust ^&^& cargo build --workspace --release
+    echo     Or build natively: cd claw-code-local\rust ^&^& cargo build -p rusty-claude-cli --release
     docker info >nul 2>&1
     if errorlevel 1 (
         echo [!] Docker is not running. Start Docker Desktop or set CLAW_BIN to claw.exe
@@ -183,6 +185,6 @@ echo   launch-claw.bat prompt "say hello"
 echo   launch-claw.bat general prompt "summarize README.md"
 echo   launch-claw.bat --permission-mode read-only prompt "list src folder"
 echo.
-echo Source + docs:  .\claw-code\       USAGE.md, README.md
+echo Source + docs:  .\claw-code-local\  README.md
 echo.
 endlocal & exit /b 0

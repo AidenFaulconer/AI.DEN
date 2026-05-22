@@ -6,6 +6,7 @@ name: AI.DEN agent workflow
 
 1. `glob_files` or `grep_search` — never `read_file` a path you have not verified.
 2. `workspace_info` — if paths fail or workspace root is unclear.
+3. `get_session_summary` — new thread or after switching from Claw when context was compacted.
 3. **Monorepo:** VS Code on `AI.DEN` → use `House-App/...` prefixes; or open `House-App` as the workspace folder.
 
 ## Errors (VS Code)

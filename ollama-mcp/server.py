@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -39,15 +40,26 @@ from workspace_roots import (
 
 # Tools the model may call via OpenAI tool_calls (exclude meta / recursion)
 CHAT_EXCLUDED_TOOLS = frozenset({"chat", "generate", "agent_chat"})
+# Disabled duplicates / low-value tools (see docs/tool-policy.md). Aliases still route (e.g. context7_docs → library_docs).
+MCP_DISABLED_TOOLS_DEFAULT = frozenset({"context7_docs", "embed"})
+_SESSION_SUMMARY_REL = ".aiden/last-session-summary.md"
+
 ALLOWED_TOOL_NAMES = frozenset({
-    "read_file", "write_file", "edit_file", "workspace_info",
+    "read_file", "write_file", "edit_file", "workspace_info", "get_session_summary",
     "list_dir", "grep_search", "glob_files", "run_command",
-    "web_search", "fetch_url", "library_docs", "context7_docs", "project_dependencies",
+    "web_search", "fetch_url", "library_docs", "project_dependencies",
     "project_tasks", "run_tests",
     "symbol_search",
     "list_models", "list_running_models", "show_model",
-    "embed", "pull_model", "delete_model", "copy_model", "ollama_version",
+    "pull_model", "delete_model", "copy_model", "ollama_version",
 })
+
+
+def _mcp_disabled_tools() -> frozenset[str]:
+    raw = os.environ.get("AIDEN_MCP_DISABLED_TOOLS", "").strip()
+    if raw.lower() in ("", "none", "0", "false", "off"):
+        return MCP_DISABLED_TOOLS_DEFAULT
+    return frozenset(t.strip() for t in raw.split(",") if t.strip())
 # Tools the agent_chat loop may execute server-side (excludes destructive registry ops)
 AGENT_EXECUTABLE_TOOLS = ALLOWED_TOOL_NAMES - frozenset({"pull_model", "delete_model", "copy_model"})
 
@@ -79,6 +91,8 @@ TOOL_ALIASES: dict[str, str] = {
     "resolve_library": "library_docs",
     "query_docs": "library_docs",
     "context7_docs": "library_docs",
+    "session_summary": "get_session_summary",
+    "last_session_summary": "get_session_summary",
     "find_symbol": "symbol_search",
     "go_to_definition": "symbol_search",
     "document_symbols": "symbol_search",
@@ -136,7 +150,12 @@ def _tool_schema(
 
 
 def get_tool_definitions() -> list[dict[str, Any]]:
-    """OpenAI-style tool list sent to llama.cpp — must match caveman allowlist."""
+    """OpenAI-style tools for chat — excludes disabled duplicates."""
+    hidden = _mcp_disabled_tools() | CHAT_EXCLUDED_TOOLS
+    return [t for t in _all_tool_schema_definitions() if t["function"]["name"] not in hidden]
+
+
+def _all_tool_schema_definitions() -> list[dict[str, Any]]:
     return [
         _tool_schema(
             "list_models",
@@ -180,6 +199,11 @@ def get_tool_definitions() -> list[dict[str, Any]]:
         _tool_schema(
             "workspace_info",
             "Show MCP workspace root and top-level files — call first if read_file paths fail.",
+            {},
+        ),
+        _tool_schema(
+            "get_session_summary",
+            "Read last compaction summary (.aiden/last-session-summary.md). Use when starting a new chat or switching Continue/Claw after context was trimmed.",
             {},
         ),
         _tool_schema(
@@ -294,16 +318,6 @@ def get_tool_definitions() -> list[dict[str, Any]]:
             [],
         ),
         _tool_schema(
-            "context7_docs",
-            "Alias for library_docs (free; Context7 not used).",
-            {
-                "query": {"type": "string"},
-                "library": {"type": "string"},
-                "library_id": {"type": "string"},
-            },
-            ["query"],
-        ),
-        _tool_schema(
             "symbol_search",
             "Find function/class/type definitions in project source (semantic-ish, not full LSP).",
             {
@@ -362,7 +376,7 @@ def get_tool_definitions() -> list[dict[str, Any]]:
 
 
 def _tools_for_chat_payload() -> list[dict[str, Any]]:
-    return [t for t in get_tool_definitions() if t["function"]["name"] not in CHAT_EXCLUDED_TOOLS]
+    return get_tool_definitions()
 
 # Load .env from project root so OLLAMA_BASE_URL etc. can be set there
 try:
@@ -777,6 +791,54 @@ def _extract_checklist_anchor(messages: list[dict[str, Any]]) -> str | None:
     return "\n".join(lines)
 
 
+def _persist_summary_enabled() -> bool:
+    v = os.environ.get("OLLAMA_MCP_PERSIST_SUMMARY", "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
+
+
+def _session_summary_path() -> Path:
+    return _ws() / ".aiden" / "last-session-summary.md"
+
+
+def _session_summary_impl() -> str:
+    path = _session_summary_path()
+    if not path.is_file():
+        return (
+            "No persisted session summary yet. "
+            f"Expected: {_SESSION_SUMMARY_REL} under workspace root ({_ws()}). "
+            "Written automatically after MCP context compaction (LLM summary tier)."
+        )
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return f"Error reading session summary: {exc}"
+    if len(text) > 12000:
+        text = text[:6000] + "\n\n…[truncated]\n\n" + text[-4000:]
+    return text
+
+
+def _persist_session_summary(summary: str, label: str) -> None:
+    """Write last compaction summary for Claw / new Continue threads (workspace/.aiden/)."""
+    if not _persist_summary_enabled() or not summary.strip():
+        return
+    try:
+        path = _session_summary_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        body = (
+            f"# AIDEN session summary ({label})\n\n"
+            f"Updated: {ts}\n\n"
+            f"{summary.strip()}\n\n"
+            "---\n"
+            "Use on a **new** chat or after switching Continue ↔ Claw. "
+            "Same thread: rely on in-chat `[AIDEN-SESSION-SUMMARY:…]` instead.\n"
+        )
+        path.write_text(body, encoding="utf-8")
+        logger.info("persisted session summary to %s", path)
+    except OSError as exc:
+        logger.warning("failed to persist session summary: %s", exc)
+
+
 def _messages_contain_checklist_anchor(messages: list[dict[str, Any]]) -> bool:
     return any(_CHECKLIST_ANCHOR_TAG in _message_text(m) for m in messages)
 
@@ -999,6 +1061,7 @@ async def _compact_messages_llm(
     summary = await _summarize_transcript(
         model, middle, options, max_words=max_words, checklist_anchor=anchor
     )
+    _persist_session_summary(summary, label)
     body = f"[AIDEN-SESSION-SUMMARY:{label}]\n{summary}\n\nContinue the chat from here."
     compacted: list[dict[str, Any]] = []
     compacted.extend(system_msgs)
@@ -1416,6 +1479,8 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> str:
     try:
         if name == "workspace_info":
             return _workspace_info_impl()
+        if name == "get_session_summary":
+            return _session_summary_impl()
         if name == "read_file":
             return await _read_file_impl(
                 str(args.get("path", "")),
@@ -1705,9 +1770,21 @@ async def show_model(model: str) -> str:
 
 
 # ---- Chat & Generate ----
+def _thinking_off_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Qwen3: disable thinking so content is not empty (see docs/hardware-tuning.md)."""
+    out = dict(payload)
+    out.setdefault("enable_thinking", False)
+    kw = out.get("chat_template_kwargs")
+    if not isinstance(kw, dict):
+        kw = {}
+    kw.setdefault("enable_thinking", False)
+    out["chat_template_kwargs"] = kw
+    return out
+
+
 async def _chat_completion(payload: dict[str, Any]) -> tuple[dict[str, Any], str, list[Any] | None]:
     chat_path = _chat_path()
-    payload = {**payload, "stream": False}
+    payload = _thinking_off_payload({**payload, "stream": False})
     data = await _request("POST", chat_path, json=payload)
     return _parse_chat_response(data)
 
@@ -2252,6 +2329,12 @@ async def edit_file(path: str, old_string: str, new_string: str) -> str:
 async def workspace_info() -> str:
     """Show which directory MCP tools can read (must match your VS Code project)."""
     return _workspace_info_impl()
+
+
+@mcp.tool()
+async def get_session_summary() -> str:
+    """Read last compaction summary for cross-UI resume (new thread or Claw after trim)."""
+    return _session_summary_impl()
 
 
 @mcp.tool()

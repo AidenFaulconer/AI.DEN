@@ -33,7 +33,8 @@ The stack auto-compacts: tool shrink → LLM summary → shorter summary → eme
 
 - **Checklist anchor:** If you use a task list (`- [ ]` / `- [x]`), the stack injects `[AIDEN-CHECKLIST-ANCHOR]` with **CURRENT (resume here)** when context trims. Update checkboxes as you go; after compaction, pick up at CURRENT.
 - Re-`read_file` or `grep_search` only for detail that was dropped — not to redo finished checklist items.
-- Headers: `X-AIDEN-Context-Truncated`, `X-AIDEN-Context-Tier`.
+- **Cross-UI resume:** New Continue thread or **Claw** mid-task → MCP `get_session_summary` (or `read_file` `.aiden/last-session-summary.md`).
+- Headers: `X-AIDEN-Context-Truncated`, `X-AIDEN-Context-Tier`. Details: `docs/context-resume.md`.
 
 ## MCP workspace (important)
 
@@ -55,6 +56,7 @@ Use **only** these names via native tool_calls (never print XML in chat/thought 
 | Task | MCP tool | Example args |
 |------|----------|----------------|
 | Wrong project / paths fail | `workspace_info` | (no args) — shows mounted root |
+| Resume after compaction (new thread) | `get_session_summary` | (no args) — last summary on disk |
 | Find files (before read_file) | `glob_files` | `pattern: "**/contact*"` or `**/ListingBrowserTab.jsx"` |
 | List directory | `list_dir` | `path: "continue"` or `path: "House-App/frontend/src/components"` |
 | Read file | `read_file` | Only after glob confirms path; large files: `start_line` / `end_line` |

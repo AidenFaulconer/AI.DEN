@@ -61,12 +61,12 @@ copy continue\claw.settings.example.json %USERPROFILE%\.claw\settings.json
 
 Inside Claw: `/mcp` to list servers, then use MCP tools like Continue.
 
-**Note:** Claw’s built-in file/bash tools overlap MCP — on 4GB VRAM prefer **one** tool surface per task to save tokens.
+**Tool policy:** With MCP enabled, duplicate Claw builtins are **denied** in synced `~/.claw/settings.json` — use MCP tools instead. See **[tool-policy.md](tool-policy.md)**. Native **`bash`** stays for Windows host commands.
 
 ## Continue (VS Code)
 
-1. `.\scripts\sync-continue-config.ps1`
-2. Reload Continue, **Agent** mode, model **AI.DEN Coder**
+1. `.\scripts\sync-continue-config.ps1` — also writes repo `CLAUDE.md` from `continue/rules.md` (Claw reads it on startup)
+2. Reload Continue, **Agent** mode, model **AI.DEN Coder** or **AI.DEN Fast** (auto-routing uses fast tier for small prompts)
 3. Enable MCP **AI.DEN Ollama MCP**
 
 Repo layout: `@repo-map` (file list + optional signatures) + `@tree` (folder structure). See `docs/continue-repo-context.md`.

@@ -115,13 +115,17 @@ Coding agents should stay **low temperature**; raise `LLAMACPP_TEMP` only for op
 
 Watch response headers: `X-AIDEN-Prompt-Tokens-Est` (every request), `X-AIDEN-Context-Truncated`, `X-AIDEN-Context-Tier` (router).
 
+## Qwen3 “thinking” (empty assistant replies)
+
+Qwen3 GGUFs default to **thinking mode**: tokens go to `reasoning_content`, so `content` is empty and tool calls fail. The router sets **`enable_thinking: false`** when `LLAMACPP_ENABLE_THINKING=0` (default in `.env`). Re-run benchmarks after changing this: `python scripts/benchmark-model-eval.py --quick`.
+
 ## Caveman vs context compression
 
 | Use | What caveman does here | Effective? |
 |-----|------------------------|------------|
 | **Every chat** (`PROMPT_PIPELINE=caveman`) | Router injects `proxy/caveman-system.txt` → model replies **terser** (fewer **output** tokens) | Yes for completions |
 | **Cost** | That system block adds ~1–2k **input** tokens per request | Tradeoff on 4GB |
-| **Context compaction** | Separate ladder (tool shrink → LLM summary → emergency) | Yes for long agent runs |
+| **Context compaction** | Separate ladder (tool shrink → LLM summary → emergency); see [context-resume.md](context-resume.md) | Yes for long agent runs |
 | **Session summaries** | Tier 1/2 summaries now ask for **caveman-style** text when `PROMPT_PIPELINE` includes `caveman` | Yes — denser rollups |
 
 Caveman is **not** the same as `caveman-compress/` in the repo (that skill targets Anthropic API for file compression). Local stack uses **style instructions**, not that script.
