@@ -5,6 +5,8 @@ set -e
 MODEL="/models/${LLAMACPP_GGUF}"
 if [ -z "$LLAMACPP_GGUF" ] || [ ! -f "$MODEL" ]; then
   echo "[llamacpp] ERROR: main model not found: $MODEL" >&2
+  echo "[llamacpp] HINT: place GGUF in ./models/ or run .\\scripts\\download-fast-mtp.ps1 for Qwen3.5-9B" >&2
+  echo "[llamacpp] HINT: or set AIDEN_FAST_ENABLED=0 and remove 'fast' from COMPOSE_PROFILES until the file exists" >&2
   exit 1
 fi
 
